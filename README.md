@@ -9,6 +9,8 @@
 
 > **A direct, evidence-bound trading decision partner that runs locally.** Bring the trade you are considering or the trades you already made. FOMO Kernel reduces your decision burden without making the decision for you.
 
+You use it through an AI coding agent such as Claude Code, and it works from the holdings and transactions you give it. Your data stays on your machine.
+
 It is built for two moments:
 
 - **Before a trade:** see what the trade does to your recorded portfolio, then challenge the reason for doing it now.
@@ -54,7 +56,7 @@ A review shows the complete card in the conversation before asking you to choose
 
 ### 5. You keep the final action
 
-For a contemplated trade, FOMO Kernel can record what was considered, but never calls it executed. It does not issue a price target or decide which ticker to buy or sell.
+For a contemplated trade weighed against a recorded portfolio, FOMO Kernel can record what was considered, but never calls it executed. It does not issue a price target or decide which ticker to buy or sell.
 
 For a review, you may choose one proposed rule, write your own, or skip. The product does not manufacture a commitment merely to complete the flow.
 
@@ -115,7 +117,7 @@ cd fomo-kernel
 
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r skills/fomo-kernel/requirements.txt
 
 python3 skills/fomo-kernel/engine/review.py doctor
 mkdir -p ~/.claude/skills
@@ -219,7 +221,7 @@ python3 skills/fomo-kernel/engine/review.py prepare --test-drive --language en
 
 This command returns a Review Plan; the agent follows its selected flow to present and complete the experience.
 
-Current owner-live acceptance focuses on Claude Code and Codex. A compatible client is not automatically an accepted client.
+Claude Code is the most complete experience: native option controls and inline card rendering. Elsewhere the engine, the CLI, and the analysis are identical, and how questions and cards are presented follows what that host supports.
 
 ## Platform support
 

@@ -9,6 +9,8 @@
 
 > **一個直接、以證據為界、在本機執行的交易決策夥伴。** 把你正在考慮的交易，或已經做過的交易帶進來。FOMO Kernel 會降低你的決策負擔，但不替你做最後決定。
 
+你透過 Claude Code 這類 AI coding agent 使用它，它只根據你交給它的持倉與交易紀錄運作。你的資料留在你自己的機器上。
+
 它服務兩個核心時刻：
 
 - **交易前：** 先看這筆交易會如何改變目前記錄的持倉，再挑戰你現在出手的理由。
@@ -54,7 +56,7 @@ FOMO Kernel 會針對當下使用最窄、但仍有價值的路徑。即時交�
 
 ### 5. 最終動作仍由你負責
 
-對一筆正在考慮的交易，FOMO Kernel 可以記錄「曾經考慮過什麼」，但不會把它叫做已執行。它不給目標價，也不替你選擇要買賣哪一檔。
+對一筆放進已記錄持倉裡衡量的交易，FOMO Kernel 可以記錄「曾經考慮過什麼」，但不會把它叫做已執行。它不給目標價，也不替你選擇要買賣哪一檔。
 
 復盤時，你可以選一條候選規則、自訂一條，或跳過。產品不會為了完成流程而捏造承諾。
 
@@ -114,7 +116,7 @@ cd fomo-kernel
 
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r skills/fomo-kernel/requirements.txt
 
 python3 skills/fomo-kernel/engine/review.py doctor
 mkdir -p ~/.claude/skills
@@ -218,7 +220,7 @@ python3 skills/fomo-kernel/engine/review.py prepare --test-drive --language zh-T
 
 這個命令會回傳 Review Plan；Agent 再依它選出的 flow 呈現並完成體驗。
 
-目前 owner-live acceptance 聚焦 Claude Code 與 Codex。能相容執行，不代表已完成產品驗收。
+Claude Code 上的體驗最完整：原生選項控制項與對話內卡片渲染。在其他 host 上，引擎、CLI 與分析完全相同，問題與卡片的呈現方式則依該 host 支援的能力而定。
 
 ## 平台支援
 

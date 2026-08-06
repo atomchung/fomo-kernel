@@ -1,6 +1,11 @@
 # fomo-kernel backlog
 
-Last refreshed: 2026-07-17. The target is a promotion-ready release on 2026-07-19.
+Last refreshed: 2026-07-17, when the target was a promotion-ready release on
+2026-07-19. **That release shipped as `v0.1.0` on 2026-08-06** — see
+[CHANGELOG.md](CHANGELOG.md). This file is kept as the record of what the
+promotion release was scoped to prove, not as the live queue: the current queue
+is the [issue tracker](https://github.com/atomchung/fomo-kernel/issues), and
+issue #27 is the control plane that says which of it is actually claimable.
 
 ## North star (owner correction 2026-07-05, #112 — do not regress this)
 

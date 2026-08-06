@@ -9,6 +9,8 @@
 
 > **一个直接、以证据为边界、在本地运行的交易决策伙伴。** 把你正在考虑的交易，或已经做过的交易带进来。FOMO Kernel 会降低你的决策负担，但不会替你做最后决定。
 
+你通过 Claude Code 这类 AI coding agent 使用它，它只根据你交给它的持仓与交易记录运作。你的数据留在你自己的机器上。
+
 它服务两个核心时刻：
 
 - **交易前：** 先看这笔交易会如何改变当前记录的持仓，再挑战你现在出手的理由。
@@ -54,7 +56,7 @@ FOMO Kernel 会针对当下使用最窄、但仍有价值的路径。即时交�
 
 ### 5. 最终动作仍由你负责
 
-对一笔正在考虑的交易，FOMO Kernel 可以记录“曾经考虑过什么”，但不会把它称为已经执行。它不提供目标价，也不替你选择要买卖哪一只股票。
+对一笔放进已记录持仓中衡量的交易，FOMO Kernel 可以记录“曾经考虑过什么”，但不会把它称为已经执行。它不提供目标价，也不替你选择要买卖哪一个标的。
 
 复盘时，你可以选择一条候选规则、自定义一条，或跳过。产品不会为了完成流程而捏造承诺。
 
@@ -66,7 +68,35 @@ FOMO Kernel 会针对当下使用最窄、但仍有价值的路径。即时交�
 
 ## 复盘卡长什么样
 
-以下 committed demo 使用完全虚构的数据：
+以下 committed demo 使用完全虚构的数据。详细文字卡默认折叠，让新读者先看到产品旅程，同时保留与 HTML／图片资产同步的数字锚点。
+
+<details>
+<summary>展开复盘卡示意</summary>
+
+```text
+复盘卡 · mock 范例
+你账面赚 +$138k，但几乎全是「拿着没卖」赚的；真正进出操作，要靠纪律不靠运气。
+
+  账面总损益      +$138,058    (已实现 $19k + 未实现 $119k)
+  主动买卖盈亏比   2.9          (平均赚 $2,851 vs 赔 $1,000)
+  赢大盘 +247pp · β 2.04 · AI 敞口 98%(回撤 30% = −$50k)
+      └ 把「赢大盘」拆成运气和技巧：押对赛道 +67pp + 板块内选股 +181pp
+
+  数据备注:
+  - α 区间仍宽，还分不出选股是本事还是运气 —— demo 别当真。
+
+标的层诊断(按金额排序，小仓不纠结):
+  PLTR  +$74,058   [v] 疑似定投(涨跌都买，不是死扛) · [!] 押太重 50%
+  NVDA  +$56,412   [v] 疑似定投 · [!] 押太重 46%
+  ORCL   +$1,658   [v] 纪律持有：赚 +22%
+  AMD    -$1,000   --  大致中性
+
+[v] 你做对的：向下加仓 2 次，但都守在仓位上限内，没有任何一只越摊越重
+[X] 最大的洞：仓位 sizing — 最大一笔 PLTR 占 50%,其余平均 17%
+[*] 下次只改：单笔仓位上限定死 20%,超过就减
+```
+
+</details>
 
 ![fomo-kernel review card demo](docs/demo-card-en.png)
 
@@ -86,7 +116,7 @@ cd fomo-kernel
 
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r skills/fomo-kernel/requirements.txt
 
 python3 skills/fomo-kernel/engine/review.py doctor
 mkdir -p ~/.claude/skills
@@ -190,7 +220,7 @@ python3 skills/fomo-kernel/engine/review.py prepare --test-drive --language zh-C
 
 这个命令会返回 Review Plan；Agent 再按照它选择的 flow 呈现并完成体验。
 
-目前 owner-live acceptance 聚焦 Claude Code 与 Codex。能够兼容运行，不代表已经完成产品验收。
+Claude Code 上的体验最完整：原生选项控件与对话内卡片渲染。在其他 host 上，引擎、CLI 与分析完全相同，问题与卡片的呈现方式则依该 host 支持的能力而定。
 
 ## 平台支持
 

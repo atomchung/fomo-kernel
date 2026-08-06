@@ -25,6 +25,7 @@ GTM_MARKDOWN_ALLOWLIST = {
 ROOT_IMPLEMENTATION_DOCS = {
     Path("AGENTS.md"),
     Path("BACKLOG.md"),
+    Path("CHANGELOG.md"),
     Path("CLAUDE.md"),
 }
 IMPLEMENTATION_DOC_DIRS = (
@@ -414,6 +415,7 @@ IMPORT_BYPASS_FIXTURES = (
 # promises stay in sync, without asserting anything about translated prose.
 README_EN_PATH = ROOT / "README.md"
 README_ZH_PATH = ROOT / "README.zh-TW.md"
+README_ZH_CN_PATH = ROOT / "README.zh-CN.md"
 DEMO_CARD_EN_PATH = ROOT / "docs/demo-card-en.html"
 DEMO_CARD_ZH_PATH = ROOT / "docs/demo-card.html"
 
@@ -594,6 +596,13 @@ def test_demo_card_numbers_match_across_all_surfaces():
         ),
         "docs/demo-card.html": demo_number_tokens(
             html_body_after_style(DEMO_CARD_ZH_PATH.read_text(encoding="utf-8"))
+        ),
+        # Simplified Chinese joined this check with the text card it was missing
+        # entirely (found by external review, 2026-08-06). Its absence was
+        # invisible here precisely because the file was not a source: a third
+        # set of demo figures could have drifted from the other two forever.
+        "README.zh-CN.md (复盘卡长什么样)": demo_number_tokens(
+            markdown_section(README_ZH_CN_PATH.read_text(encoding="utf-8"), "## 复盘卡长什么样")
         ),
     }
     reference_label, reference_tokens = next(iter(sources.items()))
