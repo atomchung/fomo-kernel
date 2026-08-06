@@ -145,6 +145,20 @@ call answering the same question would. Read its JSON output (`positions`,
 re-deriving any of it, the same discipline this file already applies to
 every other engine number.
 
+Read its `sizing` block too, and relay what it says (#737). It carries the
+engine's own verdict on the weights it just emitted: whether a weight could
+be computed at all, the `aggregate_currency` those weights are measured in,
+and — when one could not — every holding that has none, each with the
+engine's own reason, plus the missing prices or FX rates that explain it.
+Two things follow. A mixed-currency book's `value` is stated in each
+holding's *native* currency while its `weight` is measured in the aggregate,
+so presenting the two as one basis misreads the book. And a null `weight` is
+never to be shown, or silently skipped, as though it were simply a small
+position: say that the weight is unavailable and why, since the whole point
+of the sizing tags is a comparison that has not been made. A missing FX rate
+is repairable the same way `references/price-feed.md` describes — transcribe
+the rate and ask again — never by inventing one or treating it as identity.
+
 Adding a third entry means writing its name, its trigger, and its exact
 shape into this section — the same "chosen once, reused" discipline above —
 not composing a one-off visualization inline and calling it the obvious
