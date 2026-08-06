@@ -75,11 +75,16 @@ def _trade_event(date, ticker, action, qty, price, market="US", currency="USD"):
             "qty": qty, "price": price, "market": market, "currency": currency}
 
 
-def _fx_envelope(path, closes, as_of="2026-07-30"):
-    """A minimal --prices envelope. `closes` is {ticker: (close, currency)}."""
+def _fx_envelope(path, closes, as_of="2026-07-30", fx=None):
+    """A minimal --prices envelope. `closes` is {ticker: (close, currency)};
+    `fx` is {currency: usd_per_unit}, omitted entirely when None -- which is
+    exactly the shape a mixed-currency book cannot be weighted from."""
     payload = {"as_of": as_of, "source": "test",
                "prices": [{"ticker": ticker, "close": close, "date": as_of, "currency": currency}
                           for ticker, (close, currency) in sorted(closes.items())]}
+    if fx:
+        payload["fx"] = [{"currency": currency, "usd_per_unit": rate, "date": as_of}
+                         for currency, rate in sorted(fx.items())]
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle)
     return str(path)
@@ -303,6 +308,247 @@ def test_positions_separates_a_residual_position_from_diagnosed_ones():
         assert residual["DUST"]["shares"] == 1.0
         assert residual["DUST"]["cost_total"] == 5.0
         assert "tags" not in residual["DUST"] and "impact" not in residual["DUST"]
+
+
+# ────────────────────── mixed-currency weighting (#737) ──────────────────────
+
+# A synthetic two-currency book. `TWAA.TW` is deliberately letter-based: real
+# Taiwan listings are numeric, so nothing here can be mistaken for a holding
+# anyone actually has. The TWD position dominates in USD terms, which is the
+# whole point -- it is the position a null weight hides.
+_MIXED_BOOK = (
+    _snapshot_event("2026-01-01", [
+        {"ticker": "TWAA.TW", "shares": 2000, "avg_cost": 850.0,
+         "market": "TW", "currency": "TWD"},
+        {"ticker": "AAA", "shares": 50, "avg_cost": 195.0,
+         "market": "US", "currency": "USD"},
+        {"ticker": "BBB", "shares": 30, "avg_cost": 120.0,
+         "market": "US", "currency": "USD"},
+    ]),
+)
+_MIXED_CLOSES = {"TWAA.TW": (2425.0, "TWD"), "AAA": (308.91, "USD"), "BBB": (200.75, "USD")}
+_TWD_USD = 0.0325
+# Native values: TWAA.TW 2000*2425 = 4,850,000 TWD; AAA 50*308.91 = 15,445.50
+# USD; BBB 30*200.75 = 6,022.50 USD. Converted at 0.0325 USD/TWD the TWD leg is
+# 157,625.00 USD, so the book is 179,093.00 USD and TWAA.TW is 88% of it. Summed
+# at face value instead, the same leg would read as 99.6% -- which is why the
+# engine refuses to aggregate unconverted currencies at all.
+_MIXED_USD = {"TWAA.TW": 4_850_000.0 * _TWD_USD, "AAA": 15_445.5, "BBB": 6_022.5}
+_MIXED_DENOM = sum(_MIXED_USD.values())
+
+
+def _assert_every_null_weight_is_named(payload):
+    """The invariant #737 is really about: a weight the engine could not
+    compute is never merely absent. Vacuously true on a fully weighted book,
+    which is the point -- it holds on both sides rather than only where the
+    disclosure fires."""
+    reported = payload["positions"] + payload["residual_positions"]
+    null_weighted = {row["ticker"] for row in reported if row["weight"] is None}
+    named = set(payload["sizing"]["unweighted"])
+    assert null_weighted == named, (
+        "every holding with no weight must be named in sizing.unweighted with the "
+        "engine's own reason; silently null is the #737 defect",
+        sorted(null_weighted), sorted(named))
+    for ticker, reason in payload["sizing"]["unweighted"].items():
+        assert reason, f"{ticker} is unweighted with no stated reason"
+
+
+def test_positions_weights_a_fully_priced_mixed_currency_book():
+    """#737. A mixed-currency book with every holding priced and a rate for
+    every held currency returned `positions: []`, pushed all of it into
+    `residual_positions`, and reported `weight: null` on every row -- while
+    `basis: "priced"`, `unpriced: []` and `status: "ok"` all said the answer
+    was complete. `consider` computed correct weights for the identical book
+    in the identical root at the same instant.
+
+    The cause was that `positions` hand-built a bare `{as_of, prices}` map,
+    which `sizing_projection` will not aggregate across currencies -- correctly,
+    since summing a ~31:1 currency at face value inverts which holding is the
+    largest. Asserting against a live `consider` call rather than only against
+    hand-computed numbers is deliberate: the guarantee is that the two commands
+    describe one book, and that is the thing that silently stopped being true.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_ledger(os.path.join(tmp, "ledger.jsonl"), _MIXED_BOOK)
+        prices = _fx_envelope(os.path.join(tmp, "prices.json"), _MIXED_CLOSES,
+                              fx={"TWD": _TWD_USD})
+        payload = _ok(_run("positions", "--root", tmp, "--prices", prices))
+
+        assert payload["status"] == "ok"
+        assert payload["basis"] == "priced"
+        assert payload["mixed_currency"] is True
+        assert payload["unpriced"] == []
+        assert payload["n_holdings"] == 3
+
+        # The regression itself: real weights, and the largest holding is a
+        # diagnosed position rather than residual dust.
+        assert payload["residual_positions"] == [], (
+            "a fully priced mixed-currency book has no residual holding; every "
+            "row landing here is the #737 null-weight collapse", payload["residual_positions"])
+        rows = {row["ticker"]: row for row in payload["positions"]}
+        assert set(rows) == {"TWAA.TW", "AAA", "BBB"}
+        assert [row["ticker"] for row in payload["positions"]][0] == "TWAA.TW", (
+            "the largest holding must lead the diagnosed positions")
+        for ticker, row in rows.items():
+            assert row["weight"] is not None, f"{ticker} came back with a null weight"
+            assert abs(row["weight"] - _MIXED_USD[ticker] / _MIXED_DENOM) < 1e-9, (
+                ticker, row["weight"], _MIXED_USD[ticker] / _MIXED_DENOM)
+        assert abs(sum(row["weight"] for row in rows.values()) - 1.0) < 1e-9
+        assert abs(rows["TWAA.TW"]["weight"] - 0.88) < 0.01, (
+            "the TWD leg is ~88% of the book once converted; ~99.6% would mean "
+            "native values were summed at face value", rows["TWAA.TW"]["weight"])
+
+        # `value` stays in each holding's own currency -- so `sizing` has to say
+        # which currency the weights are measured in, or the two read as one basis.
+        assert rows["TWAA.TW"]["value"] == 4_850_000.0, "native TWD value, not converted"
+        assert payload["sizing"] == {"applicable": True, "reason": None,
+                                     "aggregate_currency": "USD", "unweighted": {}}
+        _assert_every_null_weight_is_named(payload)
+
+        # And the two commands agree, which is the guarantee `cmd_positions`'
+        # own comment claims and #737 falsified.
+        before = _ok(_run(
+            "consider", "--root", tmp, "--prices", prices,
+            "--premise", '{"ticker": "AAA", "side": "buy", "qty": 1, "price": 308.91, '
+                         '"currency": "USD"}'))["evaluation"]["consequence"]["before"]
+        for ticker, row in rows.items():
+            assert abs(before["weights"][ticker] - row["weight"]) < 1e-12, (
+                "positions and consider disagree about a mixed-currency weight",
+                ticker, before["weights"][ticker], row["weight"])
+
+
+def test_positions_says_why_a_mixed_currency_weight_is_unavailable():
+    """The other half, and the one that keeps the silent-null shape from
+    coming back: when the weight genuinely cannot be computed -- here a
+    mixed-currency book whose envelope carries no rate for the held currency
+    -- the output must carry the engine's own reason rather than a bare null.
+
+    `positions` still answers rather than refusing the way `consider` does:
+    shares, average cost and each holding's native value are all true and are
+    what "what do I currently hold" asked for. What it may not do is present
+    that as a complete sizing answer.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_ledger(os.path.join(tmp, "ledger.jsonl"), _MIXED_BOOK)
+        prices = _fx_envelope(os.path.join(tmp, "prices.json"), _MIXED_CLOSES)  # no fx block
+        payload = _ok(_run("positions", "--root", tmp, "--prices", prices))
+
+        assert payload["status"] == "ok"
+        sizing = payload["sizing"]
+        assert sizing["applicable"] is False
+        assert sizing["reason"] == "mixed_native_currencies", sizing
+        assert sizing["aggregate_currency"] is None
+        assert set(sizing["unweighted"]) == {"TWAA.TW", "AAA", "BBB"}
+        _assert_every_null_weight_is_named(payload)
+        # The actionable half: `mixed_native_currencies` names the refusal,
+        # while the frame's own coverage names the repair -- the same missing
+        # TWD rate `consider`'s recovery payload tells the agent to go fetch.
+        assert sizing["valuation_gaps"] == {"missing_fx": ["TWD"], "missing_price": []}, sizing
+
+        # Everything that is still true is still reported.
+        rows = {row["ticker"]: row
+                for row in payload["positions"] + payload["residual_positions"]}
+        assert rows["TWAA.TW"]["shares"] == 2000.0
+        assert rows["TWAA.TW"]["value"] == 4_850_000.0
+
+        # Offline, with no prices at all, the same disclosure holds -- there is
+        # no route on which a mixed-currency null weight goes unexplained.
+        env = dict(os.environ, TR_OFFLINE="1")
+        offline = _ok(subprocess.run(
+            [sys.executable, str(REVIEW), "positions", "--root", tmp],
+            cwd=ROOT, capture_output=True, text=True, timeout=60, env=env))
+        assert offline["basis"] == "cost"
+        assert offline["sizing"]["reason"] == "mixed_native_currencies"
+        _assert_every_null_weight_is_named(offline)
+
+
+# The provider seam, injected as `usercustomize` exactly as tests/test_consider.py
+# does it (never `sitecustomize` -- Homebrew ships its own and shadowing it
+# removes site-packages), so the real CLI runs against a deterministic provider.
+# This is what makes the *engine-fetch* route -- `positions` with no `--prices`
+# -- testable at all, and #737 turns on whether that route carries FX.
+_FAKE_PROVIDER = '''
+import datetime as dt
+import os
+import sys
+sys.path.insert(0, os.environ["ENGINE_DIR"])
+# Yahoo spells TWD/USD as `TWD=X` (TWD per USD), which market_data inverts into
+# USD per TWD -- so 32.0 here is the 0.03125 rate the weights below come out of.
+CLOSES = {"TWAA.TW": 2425.0, "AAA": 308.91, "BBB": 200.75, "TWD=X": 32.0}
+
+
+def _fake_download(symbols, start, end=None):
+    import pandas as pd
+    open(os.environ["PROVIDER_LOG"], "a").write(",".join(sorted(symbols)) + "\\n")
+    index = pd.DatetimeIndex([dt.datetime(2026, 7, 29)])
+    data = {}
+    for symbol in symbols:
+        data[("Close", symbol)] = [CLOSES.get(symbol, 123.0)]
+        data[("Stock Splits", symbol)] = [float("nan")]
+    frame = pd.DataFrame(data, index=index)
+    frame.columns = pd.MultiIndex.from_tuples(frame.columns)
+    return frame, {}          # (data, per-symbol failures) -- nothing failed here
+
+
+import market_data
+market_data._download = _fake_download
+market_data._provider_available = lambda: True
+'''
+
+
+def test_positions_resolves_fx_on_the_engine_fetch_route():
+    """`positions` supports two price routes, and #737 is only fixed if both
+    of them can produce a weight. The `--prices` route depends on the agent
+    supplying an `fx` block; this is the other one -- no `--prices` at all --
+    where the engine resolves the bundle itself.
+
+    Asserted rather than reasoned about, because "the currency universe reaches
+    the request" is exactly the kind of claim that reads as obviously true from
+    the call graph and is worth one test to actually observe: the provider log
+    must show `TWD=X` being asked for, and the weights must come out real.
+    """
+    try:
+        import pandas  # noqa: F401
+    except ImportError:                                     # pragma: no cover
+        print("SKIP  test_positions_resolves_fx_on_the_engine_fetch_route (no pandas)")
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_ledger(os.path.join(tmp, "ledger.jsonl"), _MIXED_BOOK)
+        sitedir = os.path.join(tmp, "provider-site")
+        os.makedirs(sitedir, exist_ok=True)
+        with open(os.path.join(sitedir, "usercustomize.py"), "w", encoding="utf-8") as handle:
+            handle.write(_FAKE_PROVIDER)
+        log = os.path.join(tmp, "provider.log")
+        env = dict(os.environ)
+        env.pop("TR_OFFLINE", None)     # the point is the resolution path, not the degradation
+        env["ENGINE_DIR"] = str(ENGINE_DIR)
+        env["PROVIDER_LOG"] = log
+        env["PYTHONPATH"] = os.pathsep.join(
+            [sitedir, str(ENGINE_DIR), env.get("PYTHONPATH", "")]).rstrip(os.pathsep)
+        payload = _ok(subprocess.run(
+            [sys.executable, str(REVIEW), "positions", "--root", tmp],
+            cwd=ROOT, capture_output=True, text=True, timeout=120, env=env))
+
+        with open(log, encoding="utf-8") as handle:
+            asked = {symbol for line in handle for symbol in line.strip().split(",") if symbol}
+        assert "TWD=X" in asked, (
+            "the engine-fetch route must request the held currency's rate, or a "
+            "mixed-currency book can never be weighted without --prices", sorted(asked))
+
+        assert payload["basis"] == "priced"
+        assert payload["mixed_currency"] is True
+        # Weights first, so a regression here reads as the defect itself rather
+        # than as a missing disclosure key.
+        assert payload["residual_positions"] == []
+        rows = {row["ticker"]: row for row in payload["positions"]}
+        expected = {"TWAA.TW": 4_850_000.0 / 32.0, "AAA": 15_445.5, "BBB": 6_022.5}
+        denominator = sum(expected.values())
+        for ticker, row in rows.items():
+            assert abs(row["weight"] - expected[ticker] / denominator) < 1e-9, (
+                ticker, row["weight"], expected[ticker] / denominator)
+        assert payload["sizing"]["applicable"] is True, payload["sizing"]
+        assert payload["sizing"]["aggregate_currency"] == "USD"
+        _assert_every_null_weight_is_named(payload)
 
 
 def test_positions_fails_closed_with_no_recorded_book():

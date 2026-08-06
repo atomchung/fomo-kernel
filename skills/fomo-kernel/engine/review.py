@@ -8357,6 +8357,40 @@ def _positions_diagnosis(rows, canonical_held, weights, last_px, max_pos_overrid
     return diagnosed, residual
 
 
+def _positions_sizing(projected, valuation_frame, reported):
+    """Why ``positions`` can — or cannot — state a weight, in the engine's
+    own words (#737).
+
+    ``sizing_projection`` refuses to aggregate unconverted native currencies,
+    and that refusal is correct: a ~31:1 currency summed at face value does
+    not make a weight approximate, it inverts which holding is the largest.
+    What was wrong was that this command dropped the refusal on the floor and
+    emitted ``status: "ok"`` with every weight ``null`` and nothing said —
+    the failure mode ``AGENTS.md`` boundary 2 exists against, because a number
+    the user is never told is missing reads as a number that is simply small.
+
+    Every field is read off the projection and the frame, never re-derived.
+    ``reason`` and each entry in ``unweighted`` are the projection's own
+    vocabulary. ``aggregate_currency`` is load-bearing rather than decorative
+    on a mixed book: each row's ``value`` is stated in that holding's *native*
+    currency while its ``weight`` is measured in the aggregate, and a reader
+    told neither would take the two as one basis. ``valuation_gaps`` appears
+    only when a partial typed frame is what explains the gap, and carries that
+    frame's own coverage — the actionable half, since "no rate covers TWD"
+    names the repair where ``mixed_native_currencies`` only names the refusal.
+    """
+    unweighted = {row["ticker"]: projected["values"][row["ticker"]]["reason"]
+                  for row in reported if row["weight"] is None}
+    sizing = {"applicable": projected["applicable"], "reason": projected["reason"],
+              "aggregate_currency": projected["aggregate_currency"],
+              "unweighted": dict(sorted(unweighted.items()))}
+    # The legacy single-currency map carries no `usable` key at all, so this
+    # reads False only for a typed frame that genuinely came back partial.
+    if unweighted and (valuation_frame or {}).get("usable") is False:
+        sizing["valuation_gaps"] = valuation_frame["coverage"]
+    return sizing
+
+
 def cmd_positions(args):
     """Read-only current-book outlet (#561): "what do I currently hold,"
     asked away from any review, `consider` premise, or `refresh` snapshot.
@@ -8381,6 +8415,12 @@ def cmd_positions(args):
     prices is what this command does, the same as ``consider`` with no
     ``--prices``.
 
+    Prices reach that reader through ``_consider_valuation_frame``, the same
+    primitive ``consider`` binds its own feed with -- the legacy numeric map
+    on a single-currency book, and the typed native-price/FX frame that is
+    the *only* input ``sizing_projection`` will aggregate a mixed-currency
+    book through (#737).
+
     Cash, and the disclosure set a stale price / an unreliable cash balance
     / a partial book name, are deliberately not computed here: they stay on
     Rule 1's existing freeform-answer disclosure boundary rather than a
@@ -8388,6 +8428,11 @@ def cmd_positions(args):
     ``price_snapshot`` below carries just enough (``as_of`` and each
     ticker's own observed date) for the agent to judge staleness itself,
     the same raw material every other freeform answer already has.
+    ``sizing`` is not a third entry in that set and restates none of it: it
+    is the engine's own statement about a number this command emitted --
+    whether a weight exists, in which aggregate currency, and for which
+    holdings it does not and why -- which no other surface can supply and
+    whose absence is exactly what made #737 silent.
     """
     root = os.path.abspath(os.path.expanduser(args.root or session.default_root()))
     if args.driver_map:
@@ -8431,25 +8476,52 @@ def cmd_positions(args):
     except split_policy.SplitDataError as exc:
         raise ReviewError(f"split data rejected: {exc}") from exc
 
-    valuation_manifest = None
-    if last_px:
-        valuation_manifest = {"as_of": feed["as_of"], "prices": last_px}
-    # The identical canonical-book call `_consider_rows`'s ledger route
-    # makes: one reader, so `positions` and `consider` cannot describe two
-    # different current books for the same root at the same instant.
+    # The identical two-step `_consider_rows`'s ledger route performs, in the
+    # same order: learn the exact canonical holdings first, then bind the
+    # normalized native closes and FX to that same book. One reader and one
+    # binding, so `positions` and `consider` cannot describe two different
+    # current books for the same root at the same instant.
+    #
+    # That claim used to be a comment over a hand-built `{as_of, prices}` map,
+    # which is what made it false on every mixed-currency book (#737).
+    # `sizing_projection` will only aggregate across currencies through a typed
+    # frame that binds every native price *and* every FX rate to these exact
+    # holdings; a bare numeric map cannot satisfy that gate and never could, so
+    # the book fell to `mixed_native_currencies`, every weight came back null,
+    # every holding sorted under the residual floor, and the payload still said
+    # `status: "ok"`. `_consider_valuation_frame` is the primitive that builds
+    # the frame `consider` has been passing all along, and it returns the same
+    # legacy map for a single-currency book, so that path is unchanged.
     basis = portfolio_basis.query_current_book(
-        events, skipped_lines=skipped_lines, valuation_manifest=valuation_manifest,
+        events, skipped_lines=skipped_lines,
         reference_as_of=dt.date.today().isoformat(), splits=splits)
     if basis is None:
         raise ReviewError(
             f"no trustworthy canonical current book in {ledger_path}; the ledger "
             "may be unreadable or its integrity checks failed")
+    valuation_frame = _consider_valuation_frame(
+        basis, feed, agent_supplied=bool(args.prices))
+    if valuation_frame is not None:
+        basis = portfolio_basis.query_current_book(
+            events, skipped_lines=skipped_lines, valuation_manifest=valuation_frame,
+            reference_as_of=dt.date.today().isoformat(), splits=splits)
+        if basis is None:  # defensive: identical validated events yielded the book above
+            raise ReviewError(
+                f"no trustworthy canonical current book in {ledger_path}; the ledger "
+                "may be unreadable or its integrity checks failed")
     canonical_held = basis.current_book["holdings"]
     projection = portfolio_basis.sizing_projection(basis)
-    weights = {}
-    if projection is not None:
-        weights = {ticker: entry["weight"] for ticker, entry in projection.to_dict()["values"].items()
-                  if entry["applicable"]}
+    if projection is None:
+        # `consider` already refuses here rather than answering. A basis whose
+        # own projection will not validate cannot state a weight for anything,
+        # and degrading to a silent null for every holding is the defect above
+        # in its other form.
+        raise ReviewError(
+            "canonical PortfolioBasis sizing projection is invalid; no position "
+            "weight is stated rather than a wrong one")
+    projected = projection.to_dict()
+    weights = {ticker: entry["weight"] for ticker, entry in projected["values"].items()
+              if entry["applicable"]}
 
     max_pos_override = _position_cap_override(root)
     diagnosed, residual = _positions_diagnosis(
@@ -8475,6 +8547,7 @@ def cmd_positions(args):
         "positions": diagnosed,
         "residual_positions": residual,
         "unpriced": unpriced,
+        "sizing": _positions_sizing(projected, valuation_frame, diagnosed + residual),
         "price_snapshot": price_snapshot,
     })
 
