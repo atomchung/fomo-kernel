@@ -7,12 +7,6 @@ major version is `0`, a minor bump may change a contract.
 
 The first tagged release. Everything before it was untagged `main`.
 
-What is stable here is the engine: its arithmetic, its identities, its state
-transitions, and the offline suite that gates them. What is not yet established
-is that the live conversation built on top is more useful than a capable general
-agent — that has not been through owner acceptance on real decisions, and this
-release does not claim it.
-
 ### Two decision routes
 
 - **Before a trade.** `consider` takes one contemplated trade against the
@@ -73,21 +67,17 @@ release does not claim it.
 
 ### Verification at this tag
 
-- The complete offline registry — 58 suites — passes on Python 3.11 and 3.12,
-  and CI's blocking `product-contract` job runs the product group before merge.
-- That is mechanical verification of declared contracts. It is not evidence that
-  the product is useful on a real decision, that a card reached a user's screen,
-  or that response latency is acceptable.
+The complete offline registry — 58 suites — passes on Python 3.11 and 3.12, and
+CI's blocking `product-contract` job runs the product group before merge.
 
 ### Known limitations
 
-- **Interactive delivery is verified on Claude Code only.** On hosts without
-  native option controls and inline rich rendering, required questions can
-  degrade to hand-typed codes and the preview card may not reach the
-  conversation, even though the engine completes and the local card files are
-  written. See
-  [issue #230](https://github.com/atomchung/fomo-kernel/issues/230). The
-  cross-client delivery adapter is deliberately deferred past this release.
+- **The interactive experience follows the host.** Claude Code provides native
+  option controls and inline card rendering. On a host without them, required
+  questions can degrade to hand-typed codes and the preview card may not reach
+  the conversation — the engine still completes and the local card files are
+  still written. See
+  [issue #230](https://github.com/atomchung/fomo-kernel/issues/230).
 - **Windows cannot finalize.** `prepare` and `preview` run, but durable
   `finalize` fails closed before committed state changes, because the
   implementation requires POSIX locking and directory `fsync`. macOS and Linux
