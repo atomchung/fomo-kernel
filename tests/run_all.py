@@ -107,6 +107,15 @@ SUITES = [
     # A red here means a checker went blind, not that a card is wrong.
     ("Card and state checker probes", "tests/test_checkers_offline.py", "qa-eval"),
     ("Global output-voice contract (#676)", "tests/test_output_voice.py", "product"),
+    # #823's expression contract: the registries, the routing from every
+    # output surface, the two constants the document and `check_expression.py`
+    # both state, and the obligation floor's own anti-table shape. `product`,
+    # not `qa-eval`: a red here means a user-visible surface either carries an
+    # expression rule of its own again or states a disclosure rule the product
+    # no longer follows -- the same class of failure `test_output_voice.py`
+    # owns for voice. The E-series checker it drives is exercised through this
+    # suite rather than registered separately, the way `check_voice.py` is.
+    ("Expression contract and its checker (#823)", "tests/test_expression_contract.py", "product"),
     # The narrative judge itself stays out of this gate -- it is opt-in,
     # billable and non-deterministic. What belongs here is its pure logic: the
     # manifest gate that refuses a fixture set which could not catch a

@@ -516,6 +516,90 @@ def test_a_context_free_case_with_no_open_disclosures_or_staleness_needs_no_basi
         raise AssertionError(f"a case with nothing material to disclose must be accepted, got: {exc}") from exc
 
 
+# ────── the extent of an illegible book, not only that it is one (#823) ──────
+#
+# Before #823 a case cleared the gate by citing the disclosure key: "part of
+# your book carries no classification" and stop. The coverage figure then read
+# complete while the thing a reader could act on -- WHICH positions, at what
+# weight -- was never stated. That is the failure the 2026-08-14 output survey
+# measured on its own packet (case 4: a coverage field reporting 100% while the
+# real gap lived only in a hand-written header), reproduced here against this
+# repository's own gate.
+
+def _illegible_book(**overrides):
+    """A book with one unclassified holding: the disclosure fires, and the
+    named list says how much of the book it is."""
+    base = _consequence(disclosures=["cash_unreliable", "unclassified_book"],
+                        unclassified_holdings=[{"ticker": "BRV", "weight": 0.09}],
+                        undecomposed_etfs=[])
+    base.update(overrides)
+    return base
+
+
+def _unclassified_key_claim():
+    return {"claim": "Part of your book carries no sector classification.",
+            "provenance": "engine_fact", "anchor": "consequence.disclosures.1"}
+
+
+def _unclassified_extent_claim():
+    return {"claim": "BRV is one of them, and it is 9% of the book.",
+            "provenance": "engine_fact", "anchor": "consequence.unclassified_holdings.0.ticker"}
+
+
+def test_naming_the_illegibility_without_its_extent_is_refused():
+    case = {"for": [_judgment_claim()],
+            "against": [_max_pct_claim(), _effect_claim(), _disclosure_claim(),
+                        _staleness_claim(), _unclassified_key_claim()]}
+    _rejects("out_of_scope unclassified_book", case, consequence=_illegible_book())
+
+
+def test_naming_the_extent_clears_the_same_case():
+    """The counterpart: the identical case plus one claim citing into the
+    named list is accepted. Without this, the test above would also pass if
+    the gate had simply become unsatisfiable."""
+    case = {"for": [_judgment_claim()],
+            "against": [_max_pct_claim(), _effect_claim(), _disclosure_claim(),
+                        _staleness_claim(), _unclassified_key_claim(),
+                        _unclassified_extent_claim()]}
+    try:
+        _validate(case, consequence=_illegible_book())
+    except answer_provenance.AnswerProvenanceError as exc:
+        raise AssertionError(f"a case naming the extent must be accepted, got: {exc}") from exc
+
+
+def test_an_empty_named_list_beside_a_fired_key_requires_nothing_extra():
+    """Fail-closed in the safe direction. A disclosure whose list came back
+    empty is a producer defect, and requiring a citation into an empty array
+    would make every case on that book unsubmittable -- the same reasoning
+    the rule_id branch already applies. The disclosure itself is still
+    required; only the extent obligation drops."""
+    consequence = _illegible_book(unclassified_holdings=[])
+    case = {"for": [_judgment_claim()],
+            "against": [_max_pct_claim(), _effect_claim(), _disclosure_claim(),
+                        _staleness_claim(), _unclassified_key_claim()]}
+    try:
+        _validate(case, consequence=consequence)
+    except answer_provenance.AnswerProvenanceError as exc:
+        raise AssertionError(f"an empty list must not create an uncitable obligation, got: {exc}") from exc
+
+
+def test_every_legibility_disclosure_has_a_named_list_to_cite():
+    """The three keys whose gap is an extent, and the list each one names.
+    Stated as a mapping test rather than three behavioural ones so a fourth
+    such disclosure added to consequence.py cannot quietly join the two that
+    still only require their key."""
+    assert answer_provenance._OUT_OF_SCOPE_LISTS == {
+        "partial_book": "excluded_holdings",
+        "unclassified_book": "unclassified_holdings",
+        "etf_not_decomposed": "undecomposed_etfs",
+    }
+    for key, field in answer_provenance._OUT_OF_SCOPE_LISTS.items():
+        consequence = _consequence(disclosures=[key], **{field: [{"ticker": "BRV", "weight": 0.09}]})
+        paths = {entry["path"] for entry in answer_provenance.required_coverage(
+            _basis(), consequence, _rule_collisions()) if entry["owes"] == "out_of_scope"}
+        assert paths == {f"consequence.{field}"}, f"{key} names no citable extent: {paths}"
+
+
 # ───────────────────────── drift guards ─────────────────────────
 
 def test_provenance_vocabulary_matches_reviews_agent_case_provenance():

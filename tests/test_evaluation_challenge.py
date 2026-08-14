@@ -173,8 +173,20 @@ def _consequence(**overrides):
                   "oversize_triggered": True, "concentration_triggered": True,
                   "cash": {"balance": 5400.0, "weight": 0.05}},
         "delta": {"max_pct": 0.14, "ticker_weight": 0.14},
-        "disclosures": ["cash_unreliable"],
+        # In `consequence()`'s own emission order: the cash check runs before
+        # the legibility read, so a fixture that reversed them would let an
+        # index-addressed anchor pass here and fail on a real payload.
+        "disclosures": ["cash_unreliable", "unclassified_book"],
         "excluded_holdings": [{"ticker": "ACME", "reason": "unavailable_cost"}],
+        # #823. A held position whose weight is real and whose composition was
+        # never read — the extent behind `unclassified_book`, which the
+        # disclosure key alone does not state. Present here so the fixture
+        # exercises the out_of_scope topic and the coverage obligation that
+        # pairs with it; `undecomposed_etfs` stays empty, since one of the two
+        # lists being empty is the ordinary case and the emptier branch is
+        # what a real book most often takes.
+        "unclassified_holdings": [{"ticker": "BRV", "weight": 0.09}],
+        "undecomposed_etfs": [],
     }
     base.update(overrides)
     return base
@@ -752,7 +764,7 @@ def test_required_coverage_vocabulary_matches_the_schemas_enums():
     checks that the two still describe the same set."""
     schema = _challenge_schema()["properties"]["required_coverage"]["items"]["properties"]
     assert set(schema["owes"]["enum"]) == {"disclosure", "basis", "price_basis",
-                                           "rule_collision"}
+                                           "rule_collision", "out_of_scope"}
     keys = set(schema["key"]["enum"])
     # #618's own literal. Named here rather than left to the behavioral tests
     # because an enum value no code path emits and a code path no enum admits

@@ -209,8 +209,9 @@ not change the wording, it changes which challenge the answer is about.
   instead of handing the user something to answer. Owner ruling 2026-07-30,
   the second instance of the caveat-filler pattern #552 owns. A limitation
   that genuinely cannot become a question is still stated, plainly and once,
-  attached to the claim it qualifies — what is never acceptable is a
-  material limitation disappearing, or a completeness list of them.
+  in the answer's tail disclosure block (`docs/expression-contract.md` D1) —
+  what is never acceptable is a material limitation disappearing, or a
+  completeness list of them.
 
 ## Scene 11 — the turn: "so should I buy it or not?"
 
