@@ -129,7 +129,7 @@ skipping it.
 
 | Surface class | Prefix | Why this one |
 |---|---|---|
-| Review card footnote | `- ` (the footnote's existing bullet) | Already shipped and already checked (`check_card.py` S-3); the card pipeline is a finished precedent and #823's constraint is not to reopen it. |
+| Review card footnote | `- ` (the footnote's existing bullet) | Already shipped: the card pipeline is a finished precedent and #823's constraint is not to reopen it. Note what is and is not checked — `check_card.py` S-3 asserts the footnote's *position*, never its prefix, so this row records the card's shipped convention rather than a rule under guard. |
 | Every conversational surface — `consider`, freeform answers, no-book framing, weekly market read | `[i] ` | The card's own `[v]`/`[X]`/`[?]`/`[*]` tag vocabulary, extended by one, so the prefix is language-neutral, never occurs in ordinary prose, and reads as a tag rather than as punctuation. |
 
 Adding a surface class means adding a row here. Inventing a prefix inline does
@@ -240,18 +240,27 @@ them may restate, narrow, or contradict V/D/C.
 
 ## 6. Enforcement
 
-| Check | What it observes | Where |
+| Check | What it observes — and what it does not | Where |
 |---|---|---|
-| `check_card.py` S-3 | D1/D2 on the review card: no consecutive caveat paragraphs, none before Block 1, none inside Block 1. | `tests/agent/check_card.py` |
-| `check_expression.py` E-1…E-5 | D1/D3/D5/D6 and C4 on a conversational answer, against synthetic witnesses. | `tests/agent/check_expression.py` |
+| `check_card.py` S-3 | **D1 on the review card, by position only**: no consecutive caveat paragraphs, none before Block 1, none inside Block 1. It does not read the footnote's prefix, and it has no opinion on D2. | `tests/agent/check_card.py` |
+| `check_expression.py` E-1…E-5 | D1 (E-1), D3 (E-2), D5 (E-3), D6 (E-4) and C4 (E-5) on a conversational answer, against synthetic witnesses. E-4 folds case and punctuation only, so two lines stating one limitation in genuinely different words survive it. | `tests/agent/check_expression.py` |
 | `check_voice.py` | V1–V9 witness classification. | `tests/agent/check_voice.py` |
-| `answer_provenance` | C1/C2/C4 on a structured `--agent-case`, and the coverage a case may not leave uncited. | `skills/fomo-kernel/engine/answer_provenance.py` |
-| `test_expression_contract.py` | That this registry is complete, that every surface document routes here, and that no surface carries its own placement rule. | `tests/test_expression_contract.py` |
+| `answer_provenance` | C1/C2/C4 on a structured `--agent-case`, and the coverage a case may not leave uncited — including the extent of an illegible book, not only that it is one. | `skills/fomo-kernel/engine/answer_provenance.py` |
+| `test_expression_contract.py` | That both registries here are complete and survive a removal mutation, that every surface document routes here, that the prefix and cap this file states are the ones the checker enforces, and that **the one clause #823 reversed** ("never grouped into a disclosure block") appears nowhere as an instruction. That last check is specific, not general: no test can decide whether a surface has invented some *new* placement rule of its own. | `tests/test_expression_contract.py` |
 
-What none of them observes is whether a model actually said it. A document, a
-fixture, or a passing loader is implementation evidence; the delivery half is
-observed by owner-live dogfood and by the QA receipt, exactly as
-`output-voice.md` already states about its own registry.
+**None of these runs against a live answer.** `check_expression.py` is a
+fixture oracle: it proves each rule is decidable and that a witness violating
+it is caught, exactly the way `check_voice.py` does for V1–V9. Nothing sits
+between the model and the user, and adding a runtime gate is not what #823
+asked for. So what this contract buys is that the rules are one set, stated
+once, mechanically decidable, and no longer able to contradict each other —
+not that an answer obeyed them.
+
+The delivery half is observed the same way every other instruction-tier rule
+in this repository is: by owner-live dogfood and by the QA receipt
+(`references/ux-receipt.md`'s `consider` route). A document, a fixture, or a
+passing loader is implementation evidence and this file says so rather than
+letting a green suite read as a governed output.
 
 ## 7. Ruling log
 
