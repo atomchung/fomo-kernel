@@ -54,12 +54,41 @@ DISCLOSURE_IDS = tuple(f"D{number}" for number in range(1, 7))
 CITATION_IDS = tuple(f"C{number}" for number in range(1, 5))
 ROW_RE = re.compile(r"^\|\s*([DC]\d+)\s*\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|$", re.M)
 
-# The reversed clause. It was decision-framing.md's rule 2 and it mandated the
-# opposite of the card's own footnote rule, with no scope note — the silent
-# contradiction #823 names. It may still appear in prose that records the
-# reversal; it may not appear as an instruction.
-REVERSED_CLAUSE = "never grouped into a disclosure block"
-REVERSAL_RECORDS = {CONTRACT, REFERENCES / "decision-framing.md"}
+# The reversed wording, in every form it was actually written in. It may still
+# appear in prose that records the reversal; it may not appear as an
+# instruction.
+#
+# This started as one string and that was not enough. The first cut of #823
+# swept for `decision-framing.md`'s phrasing alone and shipped with `SKILL.md`
+# rule 3 still reading "beside the claim it qualifies" — on the *first*
+# instruction layer, loaded on every single turn, while the new rule sat two
+# files deeper. A surface-bound sweep for a surface-bound defect: the same
+# shape as the defect it was sweeping for.
+REVERSED_CLAUSES = (
+    "never grouped into a disclosure block",
+    "beside the claim it qualifies",
+    "attached to the claim it qualifies",
+    "attached to what they qualify",
+)
+REVERSAL_RECORDS = {
+    CONTRACT,
+    ROOT / "docs" / "output-voice.md",
+    ROOT / "docs" / "output-contract.md",
+    REFERENCES / "decision-framing.md",
+}
+
+# Where the sweep runs. Not just the surface documents: the always-on
+# instruction layers are the ones a stale rule does the most damage from, and
+# the agent-facing QA scene files are read as acceptance criteria.
+#
+# The host adapters are deliberately outside it. `AGENTS.md` is in — it is the
+# shared floor every client receives — but a host adapter may carry tool
+# mechanics only, and `tests/test_doc_language.py` already fails the suite if a
+# shared rule appears in one. A second sweep over them would be this file
+# asserting a boundary that file owns.
+SWEEP_GLOBS = ("docs/*.md", "skills/fomo-kernel/*.md",
+               "skills/fomo-kernel/references/*.md", "skills/fomo-kernel/flows/*.md",
+               "tests/agent/*.md", "AGENTS.md")
 
 
 def _load_checker():
@@ -128,22 +157,40 @@ def test_every_surface_routes_to_the_contract():
             f"{path.relative_to(ROOT)} ({surface}) does not route to the expression contract")
 
 
-def test_no_surface_still_instructs_the_reversed_placement():
-    """The one clause that must not come back. `decision-framing.md` keeps it
-    inside the block quote recording its own reversal, and the contract keeps
-    it in the ruling log; anywhere else it is the contradiction returning."""
-    for path in ROOT.glob("docs/*.md"):
-        _assert_clause_is_only_a_record(path)
-    for path in REFERENCES.glob("*.md"):
-        _assert_clause_is_only_a_record(path)
+def test_no_instruction_surface_still_teaches_the_reversed_placement():
+    """Every phrasing of the reversed rule, across every instruction layer.
+
+    The files in `REVERSAL_RECORDS` keep it inside prose that records the
+    reversal — a ruling log, a block quote, a superseded-clause note. Anywhere
+    else it is the contradiction returning, and the layer it returns on
+    matters most where it is loaded most."""
+    swept = 0
+    for pattern in SWEEP_GLOBS:
+        for path in sorted(ROOT.glob(pattern)):
+            swept += 1
+            text = path.read_text(encoding="utf-8")
+            for clause in REVERSED_CLAUSES:
+                if clause in text:
+                    assert path in REVERSAL_RECORDS, (
+                        f"{path.relative_to(ROOT)} teaches {clause!r}, "
+                        "the placement rule #823 reversed")
+    assert swept > 30, f"the sweep reached only {swept} files; a glob stopped matching"
 
 
-def _assert_clause_is_only_a_record(path):
-    text = path.read_text(encoding="utf-8")
-    if REVERSED_CLAUSE not in text:
-        return
-    assert path in REVERSAL_RECORDS, (
-        f"{path.relative_to(ROOT)} instructs the placement rule #823 reversed")
+def test_the_always_on_layer_states_the_current_placement_rule():
+    """`SKILL.md` is loaded on every turn and the expression contract is two
+    files deeper, so the one-line version has to be right *here* or the rule
+    reaches nobody. The first cut of #823 left this line reading "beside the
+    claim it qualifies" — the exact wording it had just reversed — which is
+    how a contract can be internally perfect and still ship the old
+    behaviour."""
+    text = (ROOT / "skills" / "fomo-kernel" / "SKILL.md").read_text(encoding="utf-8")
+    checker = _load_checker()
+    assert "tail block" in text, "SKILL.md does not state where a limitation goes"
+    assert f"`{checker.PREFIX}`" in text, "SKILL.md does not state the disclosure prefix"
+    assert "denominator, unit, or pricing set" in text, (
+        "SKILL.md states the tail rule without D2's enumeration, so the one "
+        "case that legitimately stays inline has nowhere to be read from")
 
 
 def test_the_contract_routes_voice_rather_than_restating_it():
@@ -294,7 +341,8 @@ def main():
         test_registry_mutations_are_caught,
         test_an_unverified_rule_is_declared_unverified,
         test_every_surface_routes_to_the_contract,
-        test_no_surface_still_instructs_the_reversed_placement,
+        test_no_instruction_surface_still_teaches_the_reversed_placement,
+        test_the_always_on_layer_states_the_current_placement_rule,
         test_the_contract_routes_voice_rather_than_restating_it,
         test_the_prefix_and_the_cap_are_declared_once,
         test_the_witness_oracle_passes,
