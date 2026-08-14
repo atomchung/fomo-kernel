@@ -25,6 +25,12 @@ commitment, or canonical state. A public L1 event, if a host later adds one,
 must follow `market-lookup.md`: one triggered packet maximum, source/as-of on
 every public fact, and never infer the user's motive.
 
+How that brief is said is not this file's to decide: apply the global
+[expression contract](../../../docs/expression-contract.md) — voice V1–V9,
+disclosure placement D1–D6, provenance labelling C1–C4. Source and as-of on a
+public fact are C2; the labelled judgment risk is C1. This file owns only what
+the read may compute and what it must refuse.
+
 The host shows value first. The first response has `optional_question.selected`
 as `null`, then may ask its one optional question after the complete brief.
 When the user skips, stop: the shown brief is already complete. Only on an

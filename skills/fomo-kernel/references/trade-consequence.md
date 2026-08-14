@@ -127,7 +127,7 @@ The response is still `{"status": "error", "error": "<message>"}`, and it carrie
 - Frame at least two of the user's own nominated options — the specific holdings *they* are weighing, gathered from the conversation, never invented. `usable_facts` carries no opinion on which tickers are on the table; that is the user's context, not the engine's.
 - For each option, state what selling (or keeping) it would commit the user to believing, and which fact in `usable_facts` it trades off — cite only fields the payload actually carries. Nothing here licenses recomputing a weight, a rule collision, or any other arithmetic the refusal could not produce; a fact absent from `usable_facts` is a fact this answer does not have, not one to estimate.
 - Never name which security to sell. This file's opening ruling — the engine computes, it never recommends — holds exactly as hard on a refusal as it does on a priced answer.
-- Say once, attached to the claim it qualifies, that the consequence itself — the exact post-trade weight, the cash impact, whether it would collide with the rule — is unavailable. That is the one thing this route could not compute; everything in `usable_facts` is offered instead of it, not as proof it does not matter.
+- Say once that the consequence itself — the exact post-trade weight, the cash impact, whether it would collide with the rule — is unavailable. That is the one thing this route could not compute; everything in `usable_facts` is offered instead of it, not as proof it does not matter. It is a disclosure like any other and goes in the tail block ([expression contract](../../../docs/expression-contract.md) D1), not attached to an individual claim.
 
 #### One proposed trade
 
@@ -245,7 +245,7 @@ Read it as the floor of the answer, and read `SKILL.md` rule 8 with it. That rul
 
 | Key | What it is |
 |---|---|
-| `must_state` | Ordered owed facts, each `{topic, value}` plus `anchor` when the fact is addressable. |
+| `must_state` | Ordered owed facts, each `{topic, value}` plus `anchor` when the fact is addressable. The trailing two topics name holdings: `excluded_holding` for what fell out of the book entirely, `out_of_scope` for what stayed in it with its composition unread. |
 | `rule_effects` | The product-safe projection of what this trade does to each of the user's own rules: `effect`, the `limit` it was judged against and its `limit_source`, and the `must_convey` / `must_not_convey` slots. Empty when no rule speaks. See [Reading a rule collision](#reading-a-rule-collision). |
 | `quote_verbatim` | The user's own words, to be reproduced rather than summarized. Empty when no `--decision-context` was supplied. |
 | `unchecked` | What the engine did not look at on this call. |
@@ -269,7 +269,9 @@ Read it as the floor of the answer, and read `SKILL.md` rule 8 with it. That rul
 | `evidence_delta` | Present when a decision context was supplied. Whether the stated why-now is genuinely new information or a price move that feels like one is a call the engine cannot make; label your own read of it as judgment. |
 | `evidence_refs_unverified` | Present when the user cited something. The engine did not fetch, date or believe any reference; it recorded that one was cited. |
 
-`required_coverage` is deliberately a subset of `must_state`. It names every disclosure, the basis whenever it is stale or not a declared-complete book, the price session whenever the book was priced, and every rule whose `rule_effect` is `new_breach`, `worsened_existing_breach`, `improved_but_still_over` or `unchanged_existing_breach` — the four where the line is still crossed after this trade and silence would read as approval. It does **not** include `unjudged`/`unmapped` collisions: those must be *named in the answer* — an unevaluated rule presented as no issue tells the user something the engine never checked — but a book with eight behavioral rules would otherwise need eight claims saying nothing was measured, and an answer padded to satisfy a checker is worse than a short honest one. `resolved_existing_breach` is likewise stated but not required to be cited: it is good news, and no missing claim can hide a risk behind it. Its `path` is matched by prefix, so `basis` accepts any `basis.*` citation and `rule_collisions.<id>` accepts `.rule_effect`, `.state` or `.worsens`. Where two paths nest, one claim pays the narrower one only: `basis.price_observations` sits under `basis`, so citing the price day covers the price day and leaves the staleness obligation still to be cited.
+`required_coverage` names every disclosure, the basis whenever it is stale or not a declared-complete book, the price session whenever the book was priced, and every rule whose `rule_effect` is `new_breach`, `worsened_existing_breach`, `improved_but_still_over` or `unchanged_existing_breach` — the four where the line is still crossed after this trade and silence would read as approval. It does **not** include `unjudged`/`unmapped` collisions: those must be *named in the answer* — an unevaluated rule presented as no issue tells the user something the engine never checked — but a book with eight behavioral rules would otherwise need eight claims saying nothing was measured, and an answer padded to satisfy a checker is worse than a short honest one. `resolved_existing_breach` is likewise stated but not required to be cited: it is good news, and no missing claim can hide a risk behind it. Its `path` is matched by prefix, so `basis` accepts any `basis.*` citation and `rule_collisions.<id>` accepts `.rule_effect`, `.state` or `.worsens`. Where two paths nest, one claim pays the narrower one only: `basis.price_observations` sits under `basis`, so citing the price day covers the price day and leaves the staleness obligation still to be cited.
+
+**A limitation whose gap is an extent owes the extent too** (#823). Three disclosures say the numbers were measured over less than the whole book — `partial_book`, `unclassified_book`, `etf_not_decomposed` — and each carries its own list of the holdings that explain it (`excluded_holdings`, `unclassified_holdings`, `undecomposed_etfs`). Those holdings ride `must_state` under the `excluded_holding` and `out_of_scope` topics, and `required_coverage` carries a second entry per key, `owes: "out_of_scope"`, pointing at the list. Saying "part of your book carries no classification" and stopping used to clear the gate, so a case could report complete coverage while the reader learned nothing they could act on — which is what "name the excluded holdings wherever a derived percentage appears" has asked for since #515, now enforced rather than remembered. The two topics are not the same fact: an `excluded_holding` is outside the book the numbers were measured over at all, while an `out_of_scope` holding is inside it, carries a real weight, and had its *composition* go unread — which is also why their repairs differ (`--driver-map` for an unclassified name, `--instrument-map` for a fund).
 
 The block is emitted, never stored: it is a pure function of the premise, basis, consequence, collisions and context the evaluation row already freezes, and it takes no part in the `evaluation_id`. A `--resolve` call carries none, because nothing new is being answered there.
 
@@ -277,8 +279,10 @@ Under maintainer QA, delivery of these obligations is proven rather than assumed
 
 ## Route-specific synthesis
 
-Apply the global [output-voice contract](../../../docs/output-voice.md). It
-owns the universal semantic rules; this section owns only the `consider`
+Apply the global [expression contract](../../../docs/expression-contract.md):
+voice through the [output-voice contract](../../../docs/output-voice.md)
+(V1–V9), disclosure placement through D1–D6, provenance labelling through
+C1–C4. Those own how this answer speaks; this section owns only the `consider`
 route's salience facts and answer slots.
 
 The challenge block is the floor — what must be present. On a representative
@@ -294,35 +298,68 @@ Unless a truth-critical disclosure changes how an earlier item can be understood
 3. **The decision-context read** — whether `why_now` looks like a real evidence delta or a price move wearing one, labelled as your judgment. [market-lookup.md](market-lookup.md) governs verifying it.
 4. **Routine basis and unchecked boundaries** — present, compressed, attached to what they qualify; they displace the decision only when they materially undermine it.
 
-Special cases: `improved_but_still_over` and `resolved_existing_breach` are improvements to an already-broken line, never framed as a new breach — an improvement that leaves the line crossed still leads with both truths, and one that clears it is worth saying out loud rather than passing in silence. A `partial_book` or missing-FX denominator qualifies every affected percentage in the same sentence, not in a footer. A stale or cost-basis book attaches to the conclusion it weakens, and leads only when it makes the apparent consequence unreliable enough to change the decision. With no collision, lead with the largest changed consequence; with no material change, say that the supported dimensions show little change and name what stays unchecked — never convert "not measured" into "no risk".
+Special cases: `improved_but_still_over` and `resolved_existing_breach` are improvements to an already-broken line, never framed as a new breach — an improvement that leaves the line crossed still leads with both truths, and one that clears it is worth saying out loud rather than passing in silence. A `partial_book` or missing-FX denominator qualifies every affected percentage in the same sentence — it is the textbook truth-critical qualifier (expression contract D2), because the number means something different without it. A stale or cost-basis book leads only when it makes the apparent consequence unreliable enough to change the decision; otherwise it is an ordinary disclosure and goes in the tail block. With no collision, lead with the largest changed consequence; with no material change, say that the supported dimensions show little change and name what stays unchecked — never convert "not measured" into "no risk".
 
 ### Answer slots
 
-Default to two compact paragraphs plus one resolution sentence — a shape, not a template; more or fewer sentences are allowed when the challenge requires them, and there is no word-count target.
+Two parts, and the split is the point: **a judgment body, then one tail
+disclosure block.** Owner ruling 2026-08-14 (#823) — the shape that used to sit
+here folded limitations into the second paragraph's prose, which is how a
+`consider` answer accumulated hedging clauses the review card had already been
+cured of.
 
-- **Paragraph 1 — answer first:** the lead, its key engine support, and any qualifier that changes how it reads.
-- **Paragraph 2 — the real trade-off:** the strongest case the other way, the user's exact `reason` / `why_now` where owed, and one grouped limitation clause.
-- **Resolution sentence:** keep it open, decline it, or modify it — the user's call, and never imply a broker action occurred.
+**The body** — the judgment, and nothing about the limits of it. Default to two
+compact paragraphs plus one resolution sentence; a shape, not a template, and
+there is no word-count target.
+
+- **Paragraph 1 — answer first:** the lead, its key engine support, and any
+  *truth-critical* qualifier (D2) without which one of its own numbers would be
+  misread.
+- **Paragraph 2 — the real trade-off:** the strongest case the other way,
+  engaging paragraph 1's own support, plus the user's exact `reason` /
+  `why_now` where owed.
+- **Resolution sentence:** keep it open, decline it, or modify it — the user's
+  call, and never imply a broker action occurred.
+
+**The tail block** — every remaining owed limitation, one line each, prefixed
+`[i] `, at most five lines
+([expression contract](../../../docs/expression-contract.md) D1–D6). The
+`challenge` block is what fills it: the basis and price session merge into one
+line, `unchecked` is one line together, and two disclosures qualifying the same
+number are one line. Nothing that already rode a body sentence as a
+truth-critical qualifier repeats here (D6).
+
+The block is a *placement* rule, never a discount on the floor: every
+`must_state` entry is still owed, and an entry that will not fit merges with a
+neighbour rather than disappearing.
 
 ### One payload, two renderings
 
 A fictional book, run through the real engine: six US holdings at $100,000 total cost, NVDA at 30%, three semiconductor names summing to 60% `ai_pct`; the premise buys 100 more NVDA at $127.50 — below cost, dated after the book's last row — with `reason` *"NVDA is still my highest-conviction name in the book."* and `why_now` *"It dropped hard this week and the discount feels too good to pass up."* The engine returns: NVDA 30% → 37.9%, `ai_pct` 60% → 64.5%, `oversize_triggered` already true *before* the trade, cash running to −$112,750 with `cash_unreliable`, a 45-day-stale unverified cost-basis record, and `unclassified_book` naming three holdings. Seventeen owed facts, five unchecked items, no rule collision on file. Both renderings below are complete against that challenge. They are witnesses to the shape, not reference answers or test oracles.
 
-**Complete but flat — every fact true and anchored, no judgment:**
+**Complete but flat — every fact true and anchored, no judgment, no shape:**
 
 > The engine computed the following for buying 100 NVDA at $127.50. Basis: transactions as of 2026-06-15, 45 days stale, completeness unverified. NVDA weight before: 30.0%; after: 37.9%. Top-3 concentration after: 64.5%. AI exposure after: 64.5%. Max sector (semiconductors) after: 64.5%. Oversize triggered: true. Concentration triggered: true. Cash balance after: −$112,750. Disclosures: cost basis; cash unreliable; unclassified book (JNJ, PG, KO). Your reason: "NVDA is still my highest-conviction name in the book." Your why-now: "It dropped hard this week and the discount feels too good to pass up." For: you already hold NVDA and it dropped this week. Against: the record is stale; weights are on cost; cash is unreliable; part of the book is unclassified. Not checked: liquidity, valuation, tax, position fit, evidence delta. The decision is yours.
 
-Every number is anchored and every owed fact is present, and it fails all four self-checks: the for-side states what the user already knows, the against-side is the disclosure list wearing a new heading and never touches the for-side, and nothing says what the decision actually trades off.
+Every number is anchored and every owed fact is present, and it fails on both axes this section governs. On judgment: the for-side states what the user already knows, the against-side is the disclosure list wearing a new heading and never touches the for-side, and nothing says what the decision actually trades off. On expression: there is no body/block split at all — the limitations are inline sentences in the same list as the numbers, which is D1's wall of per-number interruptions in its purest form.
 
-**Decision-first — same payload, same floor:**
+**Decision-first, body then block — same payload, same floor:**
 
-> What this buy mainly changes is not your NVDA entry price — it is the size of a bet that is already past its limit. On your recorded book (cost-priced, June 15, 45 days old, never reconciled), NVDA goes from 30% to about 38% and semiconductors as a group from 60% to about 65%; the position-size line was already triggered before this trade, so this widens an existing breach rather than creating one. The recorded cash line would read −$112,750, but that balance is an unanchored running sum — read it as "no deposit has ever been recorded here", not as a real overdraft.
+> What this buy mainly changes is not your NVDA entry price — it is the size of a bet that is already past its limit. Priced on cost rather than on current market value, NVDA goes from 30% to about 38% and semiconductors as a group from 60% to about 65% — and that 65% is measured over the part of the book that carries a classification, which JNJ, PG and KO do not. The position-size line was already triggered before this trade, so this widens an existing breach rather than creating one.
 >
-> The strongest case the other way attacks the lead's own numbers: those weights are cost weights on a stale, unverified record — if this week's drop hit your semiconductor names hardest, market-value concentration is lower than the record shows — and your largest position being your highest-conviction name is a choice, not an accident. Against that, your own words — "it dropped hard this week and the discount feels too good to pass up" — describe a price move, not new evidence, and whether anything about the business actually changed is exactly what nothing here checked (nor liquidity, valuation, tax, or fit; JNJ, PG and KO carry no classification, so the 65% is measured against less than the whole book).
+> The strongest case the other way attacks the lead's own numbers: these are cost weights, so if this week's drop hit your semiconductor names hardest, market-value concentration is lower than the record shows — and your largest position being your highest-conviction name is a choice, not an accident. Against that, your own words — "it dropped hard this week and the discount feels too good to pass up" — describe a price move, not new evidence, and my read is that nothing in them names a change in the business.
 >
 > Your call: keep this open, decline it, or modify the size — nothing has been executed.
+>
+> `[i] ` Computed on your recorded book as of June 15 — 45 days old, never reconciled against a broker view.
+> `[i] ` The −$112,750 cash line is an unanchored running sum, not a real overdraft: no deposit has ever been recorded here.
+> `[i] ` Not checked: liquidity, valuation, tax, whether the position still fits you, and whether your why-now is new information or a price move.
 
-The floor is identical — same numbers, same disclosures, same verbatim quotes, same unchecked list. What changed: one lead was chosen (the second salience tier, since no user rule is on file), the basis caveat sits beside the number it weakens, the counter-case's first claim directly attacks the lead's supporting numbers, the user's own words are read against the evidence-delta question and labelled as judgment, and the cash oddity is interpreted instead of recited.
+The floor is identical — same numbers, same disclosures, same verbatim quotes, same unchecked list. What changed on judgment: one lead was chosen (the second salience tier, since no user rule is on file), the counter-case's first claim directly attacks the lead's supporting numbers, the user's own words are read against the evidence-delta question and labelled as the agent's own read (C1).
+
+What changed on expression, and which rule decides each: the cost-versus-market basis and the incomplete classification denominator stay in the body, because they are the *unit* and the *denominator* of the numbers in that sentence (D2) — without them those percentages refer to something else. Staleness, the cash-balance reliability and the unchecked list are not properties of any number's meaning, so they go to the block (D1) — three lines, under the cap, with `unchecked` merged into one line rather than five (D5). Nothing appears in both places (D6).
+
+The `[i] ` prefixes above are shown as code spans so this document's own Markdown does not render them as prose; in a real answer they are plain text at the start of the line.
 
 ## The case for and against
 

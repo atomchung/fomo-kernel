@@ -220,9 +220,17 @@ Cadence tiers (#237, wired by #277, all five sub-decisions now ruled):
 > **2026-07-22 ruling reverses this section's 2026-07-21 original**
 > (per-number placement, "rides the number it qualifies"). See §9 for the
 > reasoning; the rule below is current.
+>
+> **Placement itself is no longer this file's rule.**
+> [expression-contract.md](expression-contract.md) D1–D6 owns it for every
+> surface, generalizing the 2026-07-22 ruling below product-wide (#823). What
+> stays here is the card's own layout answer to D1's question — *which* block
+> the disclosures sit at the end of — and the card-specific selection rules
+> that follow from it.
 
 - Every honesty-ledger sentence **collapses into one footnote at the end of
-  Block 1** — collapsed/`<details>` on HTML (one bulleted `<li>` per
+  Block 1** — the card's D1 block, placed there because that is where the
+  numbers it qualifies end — collapsed/`<details>` on HTML (one bulleted `<li>` per
   sentence, sharing the section's existing `<ul>` bullet styling), one
   bulleted line per sentence on text (demo-card anchor: the "Data notes"
   footnote after the vs-market indicators; 2026-07-22 owner bullet-pass

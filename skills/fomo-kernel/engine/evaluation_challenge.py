@@ -143,7 +143,26 @@ import consequence as consequence_engine
 # compose these into whatever prose the moment calls for; the order is the
 # order the facts depend on each other, not a script.
 TOPICS = ("basis", "price_basis", "position", "concentration", "cash",
-          "rule_collision", "disclosure", "excluded_holding")
+          "rule_collision", "disclosure", "excluded_holding", "out_of_scope")
+
+# The two lists `book_legibility` builds, and the disclosure each one is the
+# extent of (#823). They are not `excluded_holdings`: an excluded holding is
+# outside the book the numbers were measured over at all, while these are
+# inside it, carry a real weight, and had their *composition* go unread —
+# `book_legibility`'s own docstring draws that line ("a position whose weight
+# is real and whose composition is not"), which is why this is a topic of its
+# own rather than a widened `excluded_holding`.
+#
+# They are here because `answer_provenance.required_coverage` now requires a
+# case to cite into them: a case could previously say "part of the book is
+# unclassified" and stop, and the coverage figure read complete while the
+# extent went unstated. The two surfaces are one contract — a coverage path
+# with no citable fact behind it would make every case on such a book
+# unsubmittable, which `tests/test_consider.py` asserts directly.
+_OUT_OF_SCOPE_LISTS = (
+    ("unclassified_holdings", "unclassified_book"),
+    ("undecomposed_etfs", "etf_not_decomposed"),
+)
 
 # What `consider` never looked at. The first four are unconditional and are
 # lifted verbatim out of references/trade-consequence.md's own sentence
@@ -541,6 +560,36 @@ def _excluded_holding_entries(record, consequence):
     return out
 
 
+def _out_of_scope_entries(record, consequence):
+    """Which held positions the concentration figures could not see, and at
+    what weight (#823).
+
+    `unclassified_book` and `etf_not_decomposed` say THAT the book was only
+    partially legible; these say how much of it. The weight rides in `detail`
+    rather than becoming a second entry, because "JNJ, 8% of the book, carries
+    no classification" is one fact about one holding — splitting it in two
+    would double the list to say the same thing, which is the large-field-list
+    failure #823 measured (a 39-row obligation table transcribed no better
+    than no table at all).
+
+    Ordered `unclassified` before `undecomposed`: the first is a position
+    nothing was known about, the second is one whose wrapper was recognized
+    and whose contents were not, so the wider gap is stated first."""
+    out = []
+    for field, key in _OUT_OF_SCOPE_LISTS:
+        for index, row in enumerate(consequence.get(field) or ()):
+            if not isinstance(row, Mapping) or not row.get("ticker"):
+                continue
+            detail = {"disclosure": key}
+            weight = row.get("weight")
+            if isinstance(weight, (int, float)) and not isinstance(weight, bool):
+                detail["weight"] = weight
+            out.append(_entry(record, "out_of_scope",
+                              f"consequence.{field}.{index}.ticker",
+                              row["ticker"], detail=detail))
+    return out
+
+
 def _quote_verbatim(context):
     """The user's own sentences, marked as the one part of this answer that
     may not be reworded. Empty on a context-free call, which captured no
@@ -622,6 +671,7 @@ def build_challenge(*, premise, basis, consequence, rule_collisions=(), context=
     must_state.extend(_rule_collision_entries(record, rule_collisions))
     must_state.extend(_disclosure_entries(record, consequence))
     must_state.extend(_excluded_holding_entries(record, consequence))
+    must_state.extend(_out_of_scope_entries(record, consequence))
 
     return {
         "must_state": must_state,

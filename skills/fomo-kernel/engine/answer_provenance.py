@@ -664,6 +664,25 @@ def _covered_collision_key(row):
     return effect if effect in _COVERED_EFFECTS else None
 
 
+# A disclosure whose real gap is *which holdings sit outside the set the
+# numbers were measured over* (#823). Each names its own list of those
+# holdings, and citing the disclosure key alone does not say which they are.
+#
+# This is case 4 of the 2026-08-14 output survey, in this repository's own
+# vocabulary: a coverage figure read 100% while the actual gap lived only in
+# a hand-written header, because the checker asked "was the limitation
+# mentioned" and never "was the extent of it stated". `partial_book` says
+# something was left out of the denominator; `consequence.excluded_holdings`
+# says what. Both are owed, and the second is the one a reader can act on --
+# references/trade-consequence.md's own rule is that the excluded holdings
+# are named wherever a derived percentage appears (#515's first invariant).
+_OUT_OF_SCOPE_LISTS = {
+    "partial_book": "excluded_holdings",
+    "unclassified_book": "unclassified_holdings",
+    "etf_not_decomposed": "undecomposed_etfs",
+}
+
+
 def required_coverage(basis, consequence, rule_collisions=()):
     """Every fact this evaluation's case must cite, as coverage paths.
 
@@ -687,6 +706,21 @@ def required_coverage(basis, consequence, rule_collisions=()):
     for index, key in enumerate(consequence.get("disclosures") or ()):
         out.append({"path": f"consequence.disclosures.{index}",
                     "owes": "disclosure", "key": key})
+        # #823. The disclosure entry above is paid by citing the key. That
+        # was the whole obligation until now, and it let a case say "part of
+        # the book is unclassified" and stop -- coverage complete, extent
+        # unstated. For the three keys whose gap *is* an extent, the named
+        # list carries a second obligation of its own.
+        #
+        # Conditioned on the list being non-empty rather than on the key
+        # alone: requiring a citation into an empty array would make every
+        # case on that book unsubmittable, the same fail-closed reasoning the
+        # rule_id branch below already applies. An empty list beside a fired
+        # key is a defect in the producer, and this is not the gate for it.
+        field = _OUT_OF_SCOPE_LISTS.get(key)
+        if field and consequence.get(field):
+            out.append({"path": f"consequence.{field}",
+                        "owes": "out_of_scope", "key": key})
 
     stale_days = basis.get("stale_days")
     stale = (isinstance(stale_days, (int, float)) and not isinstance(stale_days, bool)

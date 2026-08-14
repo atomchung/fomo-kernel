@@ -17,11 +17,13 @@ recorded book as absent. The user already supplied the premise, reason and
 why-now; preserve them and name only the exact missing system fact or next
 check.
 
-## Voice authority
+## Voice and expression authority
 
-Apply the global [output-voice contract](../../../docs/output-voice.md). It
-owns universal output semantics; this reference owns the no-book facts,
-questions, and route order below.
+Apply the global [expression contract](../../../docs/expression-contract.md):
+voice through the [output-voice contract](../../../docs/output-voice.md)
+(V1–V9), disclosure placement through D1–D6, provenance labelling through
+C1–C4. They own universal output semantics; this reference owns the no-book
+facts, questions, and route order below.
 
 ## What the answer is
 
@@ -157,8 +159,18 @@ Both are honest; only the first gives the user something to answer. The discrimi
 Three rules follow, and the third is the one that keeps the first two honest:
 
 1. Pick the one portfolio fact this decision actually turns on and ask about it. Weight, concentration, cash and rule collisions are not a checklist to recite; salience selects, exactly as it does for engine facts elsewhere.
-2. A limitation that cannot be turned into a question is stated plainly and once — "I have secondary reporting, not the filing" — attached to the claim it qualifies, never grouped into a disclosure block.
+2. A limitation that cannot be turned into a question is stated plainly and once — "I have secondary reporting, not the filing" — and it goes where every other disclosure in this product goes: the tail block, one line, prefixed `[i] `, unless it names the denominator, unit, or pricing set of a number in the body ([expression contract](../../../docs/expression-contract.md) D1–D2). This route rarely has such a number, so in practice a no-book limitation is a block line.
 3. A material limitation may never simply disappear. Dropping the narration is a change of shape, not permission to leave a decision-relevant gap unsaid.
+
+> **This rule 2 used to say the opposite** — "attached to the claim it
+> qualifies, never grouped into a disclosure block" — which contradicted the
+> review card's own footnote rule with no scope note, so the product carried
+> two disclosure policies at once. Owner ruling 2026-08-14
+> ([#823](https://github.com/atomchung/fomo-kernel/issues/823)) unified them
+> rather than marking this one a no-book exception: what this route actually
+> ruled was *which* limitations are worth stating at all (turn it into a
+> question first), and the placement clause it carried alongside was never a
+> ruling anyone made here.
 
 ## Earning the next piece of evidence
 

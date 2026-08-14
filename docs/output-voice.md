@@ -12,6 +12,13 @@ presentation, but may not create another voice contract or redefine these
 rules. Route references retain ownership of route-specific facts, slots, and
 order.
 
+Voice is one of three expression registries.
+[expression-contract.md](expression-contract.md) routes to this file for V1–V9
+and owns the other two: **where a disclosure goes** (D1–D6) and **how a claim
+states where it came from** (C1–C4). A rule about placement or citation belongs
+there, not here; a rule about what an answer leads with, refuses to
+manufacture, or stops at belongs here.
+
 Phase 1 integrates and proves this authority only on `consider` and no-book
 decision framing. That limited proof does not exempt other surfaces; it avoids
 rewriting them before the owner validates the contract.
@@ -29,7 +36,7 @@ deterministic product truth.
 | V3 | Basis before metrics | deterministic fixture | `voice_witness_oracle` | `computed_consider`, `metric_dump` |
 | V4 | One lead tension | deterministic fixture plus cross-host review | `voice_witness_oracle` | `computed_consider`, `balanced_mush` |
 | V5 | Rebuttal engages the lead's strongest support | deterministic fixture plus cross-host review | `voice_witness_oracle` | `computed_consider`, `balanced_mush` |
-| V6 | Limitations attach once to the claim they qualify | deterministic fixture | `voice_witness_oracle` | `computed_consider`, `soft_evasion` |
+| V6 | Each material limitation stated once, placed by the expression contract | deterministic fixture | `voice_witness_oracle` | `computed_consider`, `soft_evasion` |
 | V7 | Questions advance rather than defer | deterministic fixture plus cross-host review | `voice_witness_oracle` | `no_book_framing`, `question_outsourcing` |
 | V8 | User owns final action | deterministic fixture plus cross-host review | `voice_witness_oracle` | `selling_comparison`, `computed_consider` |
 | V9 | Stop when no further value exists | deterministic fixture plus cross-host review | `voice_witness_oracle` | `healthy_alignment`, `manufactured_insight` |
@@ -48,9 +55,14 @@ deterministic product truth.
   Completeness must not flatten salience into equal-weight pros and cons.
 - **V5 — real rebuttal.** The counter-case must engage the strongest support
   for the lead, rather than add an unrelated warning beside it.
-- **V6 — attached limits once.** State each material limitation once, beside
-  the claim it qualifies. Do not hide it; do not repeat it as disclaimer
-  padding.
+- **V6 — each limit once.** State each material limitation once. Do not hide
+  it; do not repeat it as disclaimer padding. *Where* it goes is one rule for
+  every surface and [expression-contract.md](expression-contract.md) owns it:
+  the tail disclosure block by default (D1), inline only when the limitation is
+  what keeps the sentence's own number from being read as something it is not
+  (D2). This clause used to read "beside the claim it qualifies", which is the
+  per-number placement the 2026-07-22 card ruling had already reversed and
+  #823 reversed product-wide.
 - **V7 — advancing questions.** Ask only after contributing the available
   analysis. A question must move the decision forward, not outsource the
   product's reasoning back to the user.

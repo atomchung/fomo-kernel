@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "privacy": "synthetic_only",
+  "comment": "Synthetic witnesses for docs/expression-contract.md's E series (#823). Every scene is invented: ACME and BRV are not instruments, no figure describes any real book, and nothing here is derived from a user record. A negative scene must fail EXACTLY the assertion it declares -- a witness that fails two is not a witness for either, because it cannot prove the check it names is the one that fired.",
+  "scenes": [
+    {
+      "id": "consider_body_then_block",
+      "kind": "positive",
+      "covers": ["D1", "D2", "D3", "D5", "D6"],
+      "note": "The shape references/trade-consequence.md's answer slots describe: judgment body, then one tail block. The unit and denominator qualifiers stay inline (D2); staleness, cash reliability and the unchecked list go to the block.",
+      "answer": "What this buy mainly changes is not your entry price — it is the size of a bet that is already past the line you set. Priced on cost rather than on current market value, ACME goes from 30% to about 38%, and that 38% is measured over the part of your book that carries a classification.\n\nThe strongest case the other way attacks those same numbers: cost weights move when the market does, and your largest position being your highest-conviction name is a choice rather than an accident. Your own words — \"the drop feels too good to pass up\" — describe a price move, and my read is that nothing in them names a change in the business.\n\nYour call: keep this open, decline it, or modify the size — nothing has been executed.\n\n[i] Computed on your recorded book as of the 15th, 45 days old, never reconciled against a broker view.\n[i] The negative cash line is a running sum with no anchor behind it, not a real overdraft.\n[i] Not checked: liquidity, valuation, tax, or whether the position still suits you."
+    },
+    {
+      "id": "nothing_fired_no_block",
+      "kind": "positive",
+      "covers": ["D4"],
+      "note": "An answer whose numbers carry no triggered limitation ends at its last judgment. The absence of a block is the rule working, not an omission.",
+      "answer": "Your own rule caps a single name at 20%, and this buy leaves ACME at 12%, so nothing you wrote collides with it. The book stays inside every line you set.\n\nYour call — nothing has been executed."
+    },
+    {
+      "id": "weekly_read_one_line_block",
+      "kind": "positive",
+      "covers": ["D1", "D5", "C1"],
+      "note": "A non-consider surface inheriting the same placement rules. One triggered limitation, one line.",
+      "answer": "Volatility rose through the week while your heaviest name was already flagged as too large — the two land on the same position, which is what makes it worth a look rather than a headline.\n\nWorth watching next week: whether that name's weight moves at all, and whether the volatility reading holds above where it sat when this review was frozen.\n\n[i] Both readings are the ones frozen with your review, not fresh quotes taken today."
+    },
+    {
+      "id": "block_is_not_the_tail",
+      "kind": "negative",
+      "fails": "E-1",
+      "note": "The classic regression: the block is written, then an offer is appended after it, so the disclosures stop being the end of the answer and become a middle section.",
+      "answer": "ACME goes from 30% to 38% after this buy, which widens a position that was already your largest.\n\n[i] Computed on your recorded book as of the 15th, 45 days old.\n[i] Not checked: liquidity, valuation, or tax.\n\nLet me know if you want me to run this again with fresh prices."
+    },
+    {
+      "id": "drifted_prefix",
+      "kind": "negative",
+      "fails": "E-2",
+      "note": "A near miss on the registered prefix. It matters because an unrecognized prefix makes that line invisible to every other check here.",
+      "answer": "ACME goes from 30% to 38% after this buy.\n\n[info] Computed on your recorded book as of the 15th, 45 days old.\n[i] Not checked: liquidity, valuation, or tax."
+    },
+    {
+      "id": "block_over_the_cap",
+      "kind": "negative",
+      "fails": "E-3",
+      "note": "Six lines where merging would give three. Each line is true; the failure is that the block became the list D5 exists to prevent.",
+      "answer": "ACME goes from 30% to 38% after this buy.\n\n[i] Computed on your recorded book as of the 15th.\n[i] The book is 45 days old.\n[i] It has never been reconciled against a broker view.\n[i] The cash line is a running sum with no anchor behind it.\n[i] Nobody checked liquidity here.\n[i] Nobody looked at valuation or tax either."
+    },
+    {
+      "id": "same_limitation_twice",
+      "kind": "negative",
+      "fails": "E-4",
+      "note": "D6. The same basis sentence rendered twice, which is how a merged block re-grows into a wall.",
+      "answer": "ACME goes from 30% to 38% after this buy.\n\n[i] Computed on your recorded book as of the 15th, 45 days old.\n[i] Not checked: liquidity, valuation, or tax.\n[i] Computed on your recorded book as of the 15th, 45 days old."
+    },
+    {
+      "id": "engine_vocabulary_in_prose",
+      "kind": "negative",
+      "fails": "E-5",
+      "note": "C4. A payload token said at the user instead of what it means for the decision.",
+      "answer": "ACME goes from 30% to 38% after this buy, and the rule comes back already_over.\n\n[i] Computed on your recorded book as of the 15th, 45 days old."
+    }
+  ]
+}
