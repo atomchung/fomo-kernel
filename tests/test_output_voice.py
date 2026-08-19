@@ -10,7 +10,7 @@ VOICE = ROOT / "docs" / "output-voice.md"
 # registry is a nine-rule authority with its own witness system, and loading it
 # before every answer was the harness tax that slice removed; what a live
 # decision actually needs -- value first, one lead judgment with its strongest
-# counter, at most one advancing question -- is stated directly in `SKILL.md`'s
+# relevant counter and only decision-changing questions -- is stated directly in `SKILL.md`'s
 # answer shape, where a host reads it without a second file.
 #
 # The two route references stay, and they are the reason this is a re-pointing

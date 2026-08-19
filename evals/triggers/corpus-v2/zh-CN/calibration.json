@@ -1,0 +1,27 @@
+{
+  "version": "v2",
+  "locale": "zh-CN",
+  "split": "calibration",
+  "prompts": [
+    {"id":"v2-zh-CN-cal-dec-01","class":"named_security_decision","text":"微软下次财报前值得买入吗？","note":"点名证券并要求买入判断。"},
+    {"id":"v2-zh-CN-cal-dec-02","class":"named_security_decision","text":"我对特斯拉的逻辑动摇了，现在应该减仓还是继续持有？","note":"点名证券并提出减持或持有决策。"},
+    {"id":"v2-zh-CN-cal-dec-03","class":"named_security_decision","text":"从现在看，亚马逊适合持有三年吗？","note":"点名证券、期限和投资判断。"},
+    {"id":"v2-zh-CN-cal-dec-04","class":"named_security_decision","text":"这里没有我的持仓资料，你仍然会建议我现在加仓英伟达吗？","note":"没有账本不应阻止点名证券决策。"},
+    {"id":"v2-zh-CN-cal-dec-05","class":"named_security_decision","text":"这笔新资金该买苹果，还是等更好的价位？","note":"点名证券与明确资金选择。"},
+    {"id":"v2-zh-CN-cal-dec-06","class":"named_security_decision","text":"AMD 从我买入后跌了很多，我该卖出、补仓还是不动？","note":"点名证券并列出实际行动选项。"},
+
+    {"id":"v2-zh-CN-cal-dis-01","class":"candidate_discovery","text":"帮我找一组有盈利、适合持有五年的网络安全股票。","note":"明确要求发现投资候选。"},
+    {"id":"v2-zh-CN-cal-dis-02","class":"candidate_discovery","text":"筛选自由现金流正在改善的可再生能源公司，并判断哪些更值得投资。","note":"带条件的发现和选择请求。"},
+    {"id":"v2-zh-CN-cal-dis-03","class":"candidate_discovery","text":"如果想长期配置半导体设备，应该比较哪些上市公司？","note":"为投资决策要求候选集合。"},
+    {"id":"v2-zh-CN-cal-dis-04","class":"candidate_discovery","text":"找三家 Costco 的上市替代标的，并按投资吸引力排序。","note":"明确要求替代标的发现与排名。"},
+    {"id":"v2-zh-CN-cal-dis-05","class":"candidate_discovery","text":"帮我为退休账户观察清单寻找收益型 ETF，并说明覆盖范围。","note":"没有起始代码仍是明确候选发现。"},
+    {"id":"v2-zh-CN-cal-dis-06","class":"candidate_discovery","text":"列出少量利润率稳定、可能值得买入的美国软件公司。","note":"明确为潜在买入建立候选清单。"},
+
+    {"id":"v2-zh-CN-cal-neg-01","class":"adjacent_negative","text":"市盈率这个指标表示什么？","note":"没有决策的纯投资教育。","near_miss_of":"named_security_decision"},
+    {"id":"v2-zh-CN-cal-neg-02","class":"adjacent_negative","text":"英伟达昨天的官方收盘价是多少？","note":"点名证券但只查市场数据。","near_miss_of":"named_security_decision"},
+    {"id":"v2-zh-CN-cal-neg-03","class":"adjacent_negative","text":"列出目前道琼斯工业平均指数的所有成分公司。","note":"只查成分列表，没有候选选择意图。","near_miss_of":"candidate_discovery"},
+    {"id":"v2-zh-CN-cal-neg-04","class":"adjacent_negative","text":"标普 500 能源板块有哪些公司？我只要成分名单。","note":"列表查询明确排除候选评估。","near_miss_of":"candidate_discovery"},
+    {"id":"v2-zh-CN-cal-neg-05","class":"adjacent_negative","text":"解释市价单和限价单的区别。","note":"一般交易教育。","near_miss_of":"general"},
+    {"id":"v2-zh-CN-cal-neg-06","class":"adjacent_negative","text":"纳斯达克常规交易时段按纽约时间几点开盘？","note":"一般市场时段查询。","near_miss_of":"general"}
+  ]
+}

@@ -4,8 +4,9 @@ The user does not only meet this product through `prepare → preview →
 finalize`. They ask ad hoc questions mid-conversation — "what's my portfolio
 worth right now," "how much cash do I have," "what if I add to this" — and
 `consider` itself answers in plain conversation, not a card
-(`trade-consequence.md`). Owner ruling, 2026-07-29 (#543): unless the user
-explicitly asks for a chart, every one of these gets a quick, direct answer.
+(`trade-consequence.md`). Owner ruling, 2026-08-19 (#827): simple questions
+default to a quick, direct text answer. That is a latency preference, not a
+semantic ceiling on relevant research, tools, or presentation.
 
 ## Why this exists
 
@@ -22,34 +23,29 @@ at it.
 
 ## Rule 1 — the default is a quick, direct answer
 
-An informational question asked outside the card gets a direct answer in
-text. No chart, no rendered artifact, no multi-tool production — a claude.ai
-Artifact, an HTML file, an image, reconstructing a book from a CSV by hand,
-cross-referencing unrelated issues or sessions, or generating any supporting
-file nobody asked for. Depth is available on request; it is never the
-opening move. Answer, then stop — the next turn is the user's, not another
-chance to keep producing.
+An informational question asked outside the card defaults to a direct answer
+in text. Do not turn a simple question into an unrelated production detour.
+Use relevant research, multiple tools, or a visual when the user asks or when
+it materially improves the decision. Stop when the marginal decision value of
+more work is lower than its cost or latency, and disclose material coverage
+limits.
 
 This covers any ad hoc question, and explicitly a `consider` call:
 `consider`'s answer is plain conversation by design (`trade-consequence.md`),
 so it is a freeform surface like any other, not a card-lifecycle exemption
 from this rule.
 
-### The one exception: recovering a price is completing the input
+### Recovering a price completes the deterministic input
 
 Owner ruling, 2026-07-30 (#629). The engine keeps one retrieval source. When
 it fails, **the agent recovers the prices** — a search may find the
 publisher's page, the close is read off that page and never off a
 search-result snippet — and hands them back through the existing `--prices`
-envelope. That is a second tool used on an ad hoc question, so this rule has
-to say plainly that it is allowed: **recovering a price the engine could not
-retrieve is completing the input, not production.** Nothing else about the
-answer changes; it is still brief, still text.
-
-It is not a general loosening. It licenses no chart, artifact, or other
-multi-tool work, on this call or any other, and it applies only when
-`consider` actually returned a `price_feed` recovery kit naming missing closes
-and/or currency conversion.
+envelope. Recovering a price the engine could not retrieve is completing the
+input. The specific integrity rules below apply when `consider` returned a
+`price_feed` recovery kit naming missing closes and/or currency conversion;
+they do not decide what other relevant research or presentation the answer may
+use.
 
 **Why the carve-out is worth its cost.** `consider` exists to answer what a
 trade does to the user's concentration. Computed without current prices, every
@@ -60,19 +56,19 @@ not lied to — the answer discloses `cost_basis` — but knowing the basis is n
 knowing that the ranking flipped. A forward-looking decision measured on cost
 describes a book that no longer exists.
 
-**The bound.** The task is **transcription, not analysis**: the output is an
+**The boundary.** The task is **transcription, not analysis**: the output is an
 envelope, and the result is mechanically checked downstream, so this is
-bounded work rather than judgment.
+input completion step rather than judgment.
 
-- **Count ceiling:** the instruments `price_feed.request.tickers` names and
+- **Coverage:** the instruments `price_feed.request.tickers` names and
   nothing else — no benchmark, no index, no integrity exclusion, and no
-  instrument the book does not hold. **At most twenty instruments**, one
-  attempt each. The engine already scopes that manifest to the held book plus
-  the premise's own ticker. When `tickers` is empty and
+  instrument the book does not hold. The engine already scopes that manifest
+  to the held book plus the premise's own ticker. When `tickers` is empty and
   `request.currencies` is non-empty, look up only those FX rates.
-- **Timeout:** an instrument whose publisher page does not resolve is left out
-  rather than retried. Supply whatever you found — partial coverage is
-  accepted, and the answer names what it could not value.
+- **Stop:** retry or change sources only while the marginal coverage is worth
+  its cost and latency. Supply whatever you found — partial coverage is
+  accepted, and the answer names what it could not value and which sources
+  were checked.
 - **Delegation:** the work is bounded and parallelizable and **may be
   delegated to whatever faster tier the host has**. Which tier, and whether the
   host has one at all, is the host's own configuration and never this
@@ -86,20 +82,17 @@ That refusal is the opposite of what the review-card lane does with the same
 declaration, and both are right. [price-feed.md](price-feed.md), "Two lanes,
 two opposite rules", is the one statement of why.
 
-## Rule 2 — a chart is named in advance, never improvised
+## Rule 2 — presentation follows decision value
 
-The expensive part was never "a picture exists." It is inventing a new
-visual shape on the spot, at whatever cost the moment suggests, every time. A
-chart is legitimate only when it matches a name in the set below. Anything
-else — a new layout, a chart-library call, a one-off rendering-tool
-invocation — is out of contract for a freeform answer, however reasonable it
-seems in the moment.
+Use the smallest presentation that makes the important relationship easier to
+understand. A visual may be generated when the user requests it or when it
+materially improves the decision. Reuse the established surfaces below when
+they fit; they are cheap defaults, not a closed list or a refusal boundary.
 
-### The named set
+### Reusable existing surfaces
 
-Owner ruling, 2026-07-29: two entries. Each was chosen once and is reused
-verbatim, never recomposed per question — the same discipline the review
-card's own sparkline already follows.
+These two surfaces already have deterministic readers and privacy contracts,
+so prefer them when they answer the request.
 
 **Review card.** Trigger: the user asks, in freeform conversation, to see
 their review card — the current one, or a specific past review's. This is
@@ -123,10 +116,9 @@ looks like" demonstrates. A ticker held below the meaningful-position floor
 (#172's residual filter — dust too small to diagnose, such as a dividend
 odd lot) is still named with its shares/cost/value, just without a
 diagnosis, matching the demo's own "small lots not nitpicked" framing —
-never silently dropped from the book. No bars, no color coding, no
-sparkline, no second panel — being in this named set never requires a
-picture, and the honest shape here is a compact text table and nothing
-else. Cash and any other disclosure (a stale price, an unreliable cash
+  never silently dropped from the book. The existing default is a compact
+  text table; a different user-requested or materially useful presentation
+  still reads the same engine facts. Cash and any other disclosure (a stale price, an unreliable cash
 balance, a partial book) still ride Rule 1's existing disclosure boundary
 rather than a rule this entry restates.
 
@@ -159,26 +151,10 @@ of the sizing tags is a comparison that has not been made. A missing FX rate
 is repairable the same way `references/price-feed.md` describes — transcribe
 the rate and ask again — never by inventing one or treating it as identity.
 
-Adding a third entry means writing its name, its trigger, and its exact
-shape into this section — the same "chosen once, reused" discipline above —
-not composing a one-off visualization inline and calling it the obvious
-choice.
-
-## Rule 3 — the set bounds the agent, not the user
-
-Rules 1 and 2 constrain what the agent decides to produce on its own
-initiative — an unprompted chart, artifact, or multi-tool detour is what the
-34-turn failure actually was. Neither rule is a ceiling on what the user may
-explicitly ask for. When the user names something outside the two entries
-above — a different chart, a different table, more detail than Rule 1's
-default — meet that request instead of declining it on this file's
-authority. Every other non-negotiable rule still applies in full to however
-that request gets answered: numbers still come only from the engine
-(AGENTS.md invariant 2 / AGENTS.md invariant 2), trade data still stays local
-(AGENTS.md invariant 4 / AGENTS.md invariant 4), and a market price is still never
-invented (AGENTS.md invariant 2; AGENTS.md states the same prohibition in its
-Workflow section rather than as a numbered boundary). This file bounds what
-the agent reaches for unasked; it was never written to tell a user no.
+These defaults never authorize a second source of portfolio truth. Numbers
+still come only from the engine, trade data stays local, and a market price is
+never invented. A new visual may reorganize supported facts; it may not
+calculate, interpolate, or silently widen them.
 
 ## Rule 4 — limitations follow relevance, not a template
 
@@ -191,9 +167,9 @@ numeric line cap is required.
 Two consequences worth stating in this file's own terms, because this is the
 surface where they were being got wrong:
 
-- **A short answer is not an honest one by virtue of being short.** Rule 1 is
-  an effort ceiling on what an answer *produces*; it has never bounded which
-  facts an answer *owes*.
+- **A short answer is not an honest one by virtue of being short.** Text-first
+  is a default, not a ceiling on what an answer *produces* or which facts it
+  *owes*.
 - **Nothing material means no disclaimer.** An answer with no material
   limitation ends at its last judgment. A standing "as always, this
   is not advice" tail is a manufactured disclosure (D4), which is the same
@@ -207,9 +183,8 @@ already applies to `partial_book`, now stated once for every surface.
 
 ## What this does not cover
 
-This file is an effort/scope ceiling: how much production an answer costs,
-never which facts it must state. Two axes used to be open here and they closed
-on different dates, so they are worth telling apart.
+This file gives cost-aware defaults and integrity boundaries. It does not cap
+what reasoning, research, or presentation a useful answer may employ.
 
 **Relevance is governed; placement and form are free (#825).** Every freeform
 surface uses the same materiality and truth-critical qualifier rules. The

@@ -4,11 +4,19 @@ A user mid-decision asks something like *"I'm thinking of buying NVDA — what d
 
 This is Layer 2 (docs/decision-fomo-kernel-shape.md §3-4): deterministic arithmetic over a hypothetical trade. The engine computes the consequence; the agent turns it and any relevant sourced evidence into an explicit recommendation. The recommendation is `agent_judgment`, never a disguised engine output or execution claim.
 
-`consider`'s answer is plain conversation, not a card — which means it is a freeform surface and `freeform-answers.md`'s default applies: a quick, direct, textual answer, with no chart or multi-tool production unless the user asks for more.
+`consider`'s answer is plain conversation, not a card — which means it is a
+freeform surface and `freeform-answers.md`'s default applies: simple questions
+start with a quick, direct text answer; relevant research, tools, and visuals
+remain available when they materially improve the decision.
 
 ## When this applies
 
-Any pre-trade question about a hypothetical trade against the user's current book — "should I buy this," "am I chasing," "should I add here," "does this break my own rule." Not for a review (use `prepare`). `consider` prices one hypothetical trade per call; a bounded comparison uses one ephemeral call per user-named or recorded-book candidate.
+Any pre-trade question about a hypothetical trade against the user's current
+book — "should I buy this," "am I chasing," "should I add here," "does this
+break my own rule." Not for a review (use `prepare`). `consider` prices one
+hypothetical trade per call; comparison uses one ephemeral call per candidate
+whose portfolio consequence matters. Candidate discovery itself is host-side
+under `market-lookup.md`'s universe, coverage, and provenance contract.
 
 ## Running it
 
@@ -50,7 +58,7 @@ The premise is the trade. `--decision-context` is optionally the *reason* — wh
 
 Entirely optional. A plain `--premise` call is a complete use of `consider` and behaves exactly as it always has, down to the `evaluation_id` it returns.
 
-- `reason` and `why_now` are the user's exact words, quoted, not your summary of them and never translated. Send them together or not at all: telling new evidence apart from a price move is the question this envelope exists to make askable, and a reason with no why-now is the half that lets it pass unasked. If the user has not said why today, ask them — that question is the product working. [market-lookup.md](market-lookup.md) allows one bounded event lookup first, so the question can name what actually happened today instead of being asked cold.
+- `reason` and `why_now` are the user's exact words, quoted, not your summary of them and never translated. Send them together or not at all. Ask for why-now only when its answers could change the recommendation, settle provenance classification, or make a context-bearing evaluation the user chose to record complete. Otherwise omit the optional context and answer the plain premise. [market-lookup.md](market-lookup.md) allows a bounded event lookup when it would make a decision-changing question more concrete.
 - `evidence_refs` is what they pointed at: a filing, a release, a headline, a note of their own. Zero to five, and only what actually moved the decision. The engine does not fetch, date or believe any of them; this records what was cited.
 - Anything over a limit is refused with the limit named, never shortened. A truncated reason or a clipped evidence list reads back as something the user said, which they did not.
 
@@ -123,20 +131,25 @@ The response is still `{"status": "error", "error": "<message>"}`, and it carrie
 
 #### Multiple user-nominated alternatives
 
-- The first visible sentence is a decision tension — what the trade-off actually is — never the engine's error message and never a request to restart the review.
-- Frame at least two of the user's own nominated options — the specific holdings *they* are weighing, gathered from the conversation, never invented. `usable_facts` carries no opinion on which tickers are on the table; that is the user's context, not the engine's.
-- For each option, state what selling (or keeping) it would commit the user to believing, and which fact in `usable_facts` it trades off — cite only fields the payload actually carries. Nothing here licenses recomputing a weight, a rule collision, or any other arithmetic the refusal could not produce; a fact absent from `usable_facts` is a fact this answer does not have, not one to estimate.
-- Recommend a candidate only when the available frozen facts genuinely distinguish the options. Otherwise name the missing discriminator instead of manufacturing a ranking.
-- Say once that the consequence itself — the exact post-trade weight, the cash impact, whether it would collide with the rule — is unavailable. That is the one thing this route could not compute; everything in `usable_facts` is offered instead of it, not as proof it does not matter. Place this material limitation where it makes the framing clearest ([expression contract](../../../docs/expression-contract.md) D1).
+- Compare whichever alternatives remain live in the user's decision. Do not
+  invent an option merely to create symmetry.
+- Use only fields `usable_facts` actually carries for portfolio claims. A fact
+  absent from it is unavailable, not one to estimate. Relevant sourced company
+  or market evidence may still distinguish the candidates when portfolio
+  arithmetic cannot.
+- Recommend or rank when the supported evidence distinguishes the options;
+  otherwise name the discriminator that remains unresolved.
+- State the material reach of the refusal — exact post-trade weight, cash
+  impact, or rule collision was not computed — without turning it into the
+  lead or a process narrative.
 
 #### One proposed trade
 
-This is not a comparison with an invented sell candidate. Start with the core
-assumption in the user's original `reason` and `why_now`, unchanged, and state
-the strongest countercondition already supported by frozen facts. If no frozen
-countercondition is safe, name the single unchecked dimension that would decide
-the tension instead. Say once that portfolio fit was not verified; do not turn
-that limitation into the lead or repeat it as filler.
+This is not a comparison with an invented candidate. Give the strongest direct
+recommendation the user's premise, relevant sourced evidence, and any safe
+frozen facts support. A counter-case or additional question appears only when
+it could change that recommendation. Say the material portfolio limitation
+without turning it into the lead or repeating it as filler.
 
 Keep the premise and context intact. Name the precise next system fact or check
 that would let the same proposal answer — for example, a usable current-book
@@ -148,13 +161,12 @@ promise background work.
 
 #### No safe decision value
 
-When neither a frozen countercondition nor a material unchecked dimension can
-be stated safely, stop at a stable two-sentence unavailable result: first what
-was not verified; then that the premise/context is preserved and the exact
-system fact needed next. This is a bounded completion, not an invitation to
-narrate the refusal process.
+When no supported recommendation is possible, state what remains unknown and
+the exact fact that would change the decision. Use the shortest clear form for
+the situation; no fixed sentence count or template applies. Do not narrate the
+refusal process.
 
-This is a different posture from a declared price dead end (`--prices-unavailable`, [below](#which-market-session-priced-it)): that one refuses the question outright rather than answer on cost basis. This one is a bounded framing that still answers, built from facts already on record before this call was ever made.
+This is a different posture from a declared price dead end (`--prices-unavailable`, [below](#which-market-session-priced-it)): that one refuses only the current-value portfolio consequence rather than answer that claim on cost basis. The host still gives any supported non-portfolio judgment the question warrants. This one is a bounded framing built from facts already on record before this call was ever made.
 
 ## Reading a rule collision
 
@@ -222,7 +234,10 @@ using the same engine helper `prepare` uses:
 - `recovery` — whether recovery was attempted at all, on the same three states [price-feed.md](price-feed.md) documents.
 - `next_action` — what to do, ending in `consider --prices <path>`.
 
-Recover the prices before you answer. That lookup is the one carve-out from `SKILL.md` rule 8's ban on multi-tool production — it is completing the input, not producing anything — and [freeform-answers.md](freeform-answers.md) states its bound: transcription only, a count ceiling, and what happens when a source does not resolve.
+Recover the prices before making a portfolio-consequence claim. The lookup is
+completing the deterministic input, and [freeform-answers.md](freeform-answers.md)
+states its boundary: transcription only, adaptive coverage/cost stopping, and
+what happens when a source does not resolve.
 
 If the sources genuinely publish nothing, run `consider --prices-unavailable '<the sources you checked>'`. The call then **refuses** instead of returning a cost-basis answer. That is the opposite of what the same declaration does on the review-card lane, on purpose; [price-feed.md](price-feed.md), "Two lanes, two opposite rules", is the single statement of why.
 
@@ -241,7 +256,10 @@ A root that has never been reviewed and a `--prices` envelope that says nothing 
 
 Every `consider` response carries a `challenge` block beside the evaluation: the engine's own statement of what *this* answer has to put in front of *this* user. It exists because the obligations used to live only in this file, to be re-derived by hand on every call from a payload with roughly forty fields in it — and because `consider`'s answer is plain conversation, so nothing between the frozen result and a user told half of it.
 
-Read it as the floor of the answer, and read `SKILL.md` rule 8 with it. That rule says a freeform answer is brief, and in the same breath that brevity bounds what an answer *produces*, never which facts it *owes*. This block is the second clause made computable. A short answer carrying every entry is exactly what rule 8 asks for; a long one that drops a rule collision still fails.
+Read it as the floor of the answer, and read `SKILL.md` with it. A simple answer
+defaults to brevity, but no presentation choice bounds which facts the answer
+*owes*. This block makes the claim floor computable: an answer of any length
+that drops a required rule collision still fails.
 
 | Key | What it is |
 |---|---|
@@ -418,6 +436,6 @@ At most one reaches you, and only when all of these hold: the same ticker, a dif
 
 It is a read projection of another stored row, not a new record. It changes no number, no `rule_effect`, no `evaluation_id`, and nothing is written because of it.
 
-**Use it only when it changes the current lead judgment, evidence requirement, process action, or the one question worth asking.** Memory that does not change the answer stays silent: there is no history paragraph to write, and "you have asked about this before" is not worth a sentence on its own. What is worth one is a question their own record has earned — *last time the reason was the price move and you passed; what is different now besides the price?*
+**Use it only when it changes the current lead judgment, evidence requirement, process action, or a decision-changing question.** Memory that does not change the answer stays silent: there is no history paragraph to write, and "you have asked about this before" is not worth a sentence on its own. What is worth one is a question their own record has earned — *last time the reason was the price move and you passed; what is different now besides the price?*
 
 Two things it is not. `decision: "acted"` is what the user **reported** doing about that consultation, exactly as `--resolve` records it — never that a trade executed, filled, or reached the ledger. And any comparison you draw from it — the same reason, a genuinely different one, a rationalization — is your judgment right now, offered as yours and labelled that way. The engine stores no pattern, no motive, and no verdict about the user, and neither should the answer imply one.

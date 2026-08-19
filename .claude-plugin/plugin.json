@@ -1,6 +1,6 @@
 {
   "name": "fomo-kernel",
-  "description": "Help with an investment decision using the user's recorded book — weigh, recommend, or rank user-named and recorded-book candidates by resulting weight, concentration, driver overlap, cash, evidence, and any rule of their own they would break. Use for what should I do, which position should I reduce, which candidate fits better, should I buy or add, am I chasing, is this too big, trade reviews, transaction postmortems, brokerage-statement reviews, and position reviews, in any language. Not a price-target, market-forecast, or autonomous-execution tool.",
+  "description": "Help with investment decisions and explicit candidate searches — research, discover, compare, rank, and recommend with or without a recorded book. Use for buy, add, reduce, trade-review, brokerage-statement, and position-review decisions. A book adds engine-computed portfolio consequences. Never claim unsupported portfolio facts or execution.",
   "version": "0.1.0",
   "author": {
     "name": "atomchung"

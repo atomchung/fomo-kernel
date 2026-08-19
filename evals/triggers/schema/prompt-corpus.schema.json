@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://fomo-kernel.local/schemas/trigger-prompt-corpus.schema.json",
   "title": "Fomo Kernel trigger-matrix prompt corpus (#458)",
-  "description": "One locale/split slice of the trigger corpus: evals/triggers/corpus/<locale>/<split>.json. The readable contract; evals/triggers/run_triggers.py's load_corpus()/load_corpus_file() hold the enforcement, because the offline suite carries no jsonschema dependency (same posture as evals/episodes/episode.schema.json).",
+  "description": "One locale/split slice of the pre-#827 historical trigger corpus: evals/triggers/corpus/<locale>/<split>.json. Do not score the widened #827 decision lane from this frozen generation; its holdout intentionally preserves now-superseded no-book recommendation labels. The readable structural contract; evals/triggers/run_triggers.py holds enforcement.",
   "type": "object",
   "additionalProperties": false,
   "required": ["locale", "split", "prompts"],

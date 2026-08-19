@@ -48,7 +48,7 @@ The asymmetry is the difference between the two questions, not an oversight:
 - A retrospective card's cost weights describe **what the user actually paid**. That is a true, useful fact about a period that has already happened, and the card discloses that prices were unavailable. Withholding the whole review over it would cost the user a real answer.
 - A forward concentration decision computed on cost describes **a book that no longer exists**. It is not a weaker answer to "what does this trade do to my concentration" — it is a different book's answer, and on this repository's own momentum fixture the largest position moves by more than thirteen points and the second and third positions by size swap places. A user holding a "no single position over half the book" rule is told they are already in breach when they are not.
 
-So `consider` degrades to a refusal where a card degrades to a disclosure. `references/freeform-answers.md` carries the agent-facing half — the bound on the recovery itself, and why looking a price up is not the "multi-tool production" `SKILL.md` rule 8 otherwise forbids.
+So `consider` degrades to a refusal where a card degrades to a disclosure. `references/freeform-answers.md` carries the agent-facing half: price recovery remains transcription with provenance and coverage, while any further research is justified by its decision value.
 
 ## Sources
 

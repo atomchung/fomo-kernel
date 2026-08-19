@@ -11,9 +11,10 @@ Converted misses live in [episodes/](episodes/README.md) and replay on every sui
 | Trade-review request plus CSV | Trigger the complete review lifecycle. |
 | Brokerage statement or screenshot | Trigger and normalize locally. |
 | Skill invocation with no data | Offer test drive without searching the user's machine for statements. |
-| Request for a stock recommendation | Do not use this skill to provide advice. |
-| Request for company research | Do not treat it as a trade postmortem. |
-| Request for a market forecast | Do not treat it as a trade postmortem. |
+| Request for a stock recommendation or explicit candidate discovery | Trigger the decision lane; research, report coverage, and recommend without inventing portfolio facts. |
+| Request for company research tied to an investment decision | Trigger the decision lane; source current facts and keep model judgment labelled. |
+| Request for a target or forecast tied to a decision | Trigger the decision lane; state assumptions and uncertainty, never as an engine fact or certainty. |
+| Pure education or market data with no investment decision | Answer directly; no review or durable decision state is required. |
 
 ## Lifecycle invariants
 
@@ -71,11 +72,11 @@ Converted misses live in [episodes/](episodes/README.md) and replay on every sui
 Prefer deterministic checks over an LLM judge, and an LLM judge over manual inspection. Use a judge only for narrative coherence, not for facts that code can assert. Prove each checker with both a known-good artifact and an intentional mutation.
 
 For a non-recoverable `consider` refusal, keep the user moment separate from
-the diagnostic trace. EP-010 covers the existing multi-option framing against
-the bounded frozen facts. EP-011 covers one proposed trade: exact
-premise/reason/why-now preservation, one portfolio-fit limit, a safe tension or
-the stable two-sentence unavailable result, and the ban on process narration,
-new arithmetic, recommendation, execution claims, and repeated questions.
+the diagnostic trace. EP-010 and EP-011 protect the claim boundary: portfolio
+numbers must come from `usable_facts`, known user context must not be rewritten,
+and no process narration or false external-action claim may leak. They do not impose a
+minimum option count, a balanced case, a ban on recommendation, a fixed
+question count, or a sentence template.
 
 ## Regression record
 

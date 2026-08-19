@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fomo-kernel.local/schemas/trigger-prompt-corpus-v2.schema.json",
+  "title": "FOMO Kernel decision-lane trigger corpus v2 (#827)",
+  "description": "One locale/split slice of the current #827 trigger corpus at evals/triggers/corpus-v2. The version stamp and widened positive classes prevent the pre-#827 corpus from becoming current release authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "locale", "split", "prompts"],
+  "properties": {
+    "version": {"const": "v2"},
+    "locale": {"enum": ["en", "zh-CN", "zh-TW"]},
+    "split": {"enum": ["calibration", "holdout"]},
+    "prompts": {
+      "type": "array",
+      "minItems": 18,
+      "maxItems": 18,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "class", "text", "note"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^v2-(en|zh-CN|zh-TW)-(cal|hold)-(dec|dis|neg)-[0-9]{2}$"},
+          "class": {"enum": ["named_security_decision", "candidate_discovery", "adjacent_negative"]},
+          "text": {"type": "string", "minLength": 1},
+          "note": {"type": "string", "minLength": 1},
+          "near_miss_of": {"enum": ["named_security_decision", "candidate_discovery", "general"]}
+        },
+        "allOf": [
+          {
+            "if": {"properties": {"class": {"const": "adjacent_negative"}}, "required": ["class"]},
+            "then": {"required": ["near_miss_of"]},
+            "else": {"not": {"required": ["near_miss_of"]}}
+          }
+        ]
+      }
+    }
+  }
+}

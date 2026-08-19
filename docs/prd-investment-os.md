@@ -72,14 +72,14 @@ The shared core calculates what happened and whether a recorded thesis or proces
 
 ## Safety boundary
 
-Feature switches may expose more owner context, but they must not create a recommendation path in shared code. Research support can test a user-owned thesis; it cannot quietly become a stock-picking API.
+As of #827, research, explicit candidate discovery, and source-backed recommendations are supported decision work. Feature switches may expose more owner context, but they must not let agent judgment masquerade as engine-computed portfolio fact or autonomous execution.
 
 ## Release sequence
 
 - Phase A: recap card.
 - Phase B: thin update, ledger, thesis, and stateful reconciliation. This is the minimum distributable complete loop.
-- Phase C: owner-only selection research support.
-- Phase D: owner-only information gathering and source attribution analysis.
+- Phase C: selection research support with explicit coverage and provenance.
+- Phase D: information gathering and source attribution analysis.
 
 ## Open decisions
 

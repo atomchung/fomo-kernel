@@ -2168,17 +2168,47 @@ def test_consider_never_writes_rules_or_creates_session_scaffolding():
 
 def test_ephemeral_consider_computes_without_recording_then_selected_call_persists():
     with tempfile.TemporaryDirectory() as tmp:
-        premise = _collision_root(tmp)
-        exploratory = _ok(_run(
-            "consider", "--root", tmp, "--premise", premise, "--ephemeral"))
-        assert exploratory["append"]["status"] == "ephemeral"
-        assert exploratory["append"]["appended"] == 0
-        assert _read_evaluations(tmp) == []
+        base = json.loads(_collision_root(tmp))
+        premises = [
+            json.dumps(dict(base, ticker="AAA", qty=20)),
+            json.dumps(dict(base, ticker="BBB", qty=15)),
+            json.dumps(dict(base, ticker="CCC", qty=10)),
+        ]
+        exploratory = []
+        for premise in premises:
+            payload = _ok(_run(
+                "consider", "--root", tmp, "--premise", premise, "--ephemeral"))
+            assert payload["append"]["status"] == "ephemeral"
+            assert payload["append"]["appended"] == 0
+            exploratory.append(payload)
 
-        selected = _ok(_run("consider", "--root", tmp, "--premise", premise))
+        exploratory_ids = [item["evaluation"]["evaluation_id"] for item in exploratory]
+        assert len(set(exploratory_ids)) == len(premises), (
+            "the fan-out fixture must exercise distinct candidate evaluations")
+        assert _read_evaluations(tmp) == []
+        assert not os.path.exists(_evaluation_path(tmp)), (
+            "ephemeral fan-out must not create even an empty canonical evaluation file")
+
+        selected_index = 1
+        selected = _ok(_run(
+            "consider", "--root", tmp, "--premise", premises[selected_index]))
         assert selected["append"]["status"] == "appended"
+        selected_id = exploratory_ids[selected_index]
+        assert selected["evaluation"]["evaluation_id"] == selected_id
+        recorded = _read_evaluations(tmp)
+        assert len(recorded) == 1
+        assert recorded[0]["evaluation_id"] == selected_id
+        assert not ({item for index, item in enumerate(exploratory_ids)
+                     if index != selected_index}
+                    & {row["evaluation_id"] for row in recorded}), (
+            "rejected exploratory candidates must not enter canonical history")
+
+        retry = _ok(_run(
+            "consider", "--root", tmp, "--premise", premises[selected_index]))
+        assert retry["append"]["status"] == "no-op"
+        assert retry["append"]["appended"] == 0
+        assert retry["evaluation"]["evaluation_id"] == selected_id
         assert len(_read_evaluations(tmp)) == 1
-        assert selected["evaluation"]["evaluation_id"] == exploratory["evaluation"]["evaluation_id"]
 
 
 def test_ephemeral_consider_does_not_accept_csv_as_an_unrecorded_book():
@@ -4963,7 +4993,7 @@ def test_s7_the_instruction_surface_states_report_not_proof():
     assert line, "SKILL.md must document the field it now receives"
     assert "never proof they did it" in line, line
     assert ("Use `prior_decision` only when it changes the current lead judgment, evidence "
-            "requirement, process action, or the one question worth asking; otherwise ignore "
+            "requirement, process action, or a decision-changing question; otherwise ignore "
             "it.") in line, line
     assert "recap" not in skill.lower(), (
         "#609 adds one rule, not a mandatory history paragraph")

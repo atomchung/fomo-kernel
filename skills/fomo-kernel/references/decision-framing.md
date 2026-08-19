@@ -2,7 +2,11 @@
 
 `review.py consider` answers what a trade does to the user's own book, and it fails closed when there is no book to answer against. That refusal is correct — it protects the arithmetic — but it is not the end of the conversation. A user who has recorded nothing still arrives with a live decision, and refusing is not what earns their transaction history. Guidance is.
 
-This file is the contract for that case: the user is deciding on one trade, has no transaction export and no holdings snapshot, and wants the decision framed anyway. It runs entirely host-side. There is no engine call, no session, no route value, and nothing is written to disk — the answer lives in the conversation and ends with it.
+This file is the contract for decisions made without a recorded book. The user
+may bring one security, several candidates, constraints, or an explicit request
+for discovery. It runs entirely host-side unless a later selected candidate is
+evaluated against a recorded book. There is no session or durable write from
+this framing itself — the answer lives in the conversation and ends with it.
 
 Confidence rises with a book; it does not fall to zero without one. This route exists to be useful now and to make the next piece of evidence worth handing over, not to stand in for [trade-consequence.md](trade-consequence.md)'s computed answer.
 
@@ -10,12 +14,12 @@ Confidence rises with a book; it does not fall to zero without one. This route e
 
 This is not the no-book route when `consider` has a recorded book but cannot
 safely compute its consequence. The route-specific refusal contract in
-[trade-consequence.md](trade-consequence.md) owns that result: if frozen facts
-support a tension, use them; if they do not, use its stable two-sentence
-unavailable result. Do not ask the three no-book questions again or treat the
-recorded book as absent. The user already supplied the premise, reason and
-why-now; preserve them and name only the exact missing system fact or next
-check.
+[trade-consequence.md](trade-consequence.md) owns any portfolio claim. Frozen
+`usable_facts` may support that claim; sourced public facts and clearly labelled
+judgment may still support a recommendation that does not pretend the missing
+portfolio consequence was computed. Do not treat the recorded book as absent
+or ask the user to repeat context already supplied. Name a missing input only
+when it could change the recommendation or unlock the portfolio claim.
 
 ## Voice and expression authority
 
@@ -27,7 +31,7 @@ facts, questions, and route order below.
 
 ## What the answer is
 
-One bounded framing carrying up to four things:
+A useful framing may carry:
 
 - a direct recommendation at the confidence the available evidence supports;
 - the support for it, and a counter-case only when material;
@@ -37,16 +41,16 @@ One bounded framing carrying up to four things:
 
 **It is never a thin `TradeEvaluation`.** No weight, no concentration figure, no cash consequence, no rule collision, no post-trade percentage — not as a zero, not as a placeholder, not as an empty section. A number that would have to be computed from a book is absent, and its absence is not narrated as a field.
 
-## Research-aware answer order
+## Research-aware strategy framing
 
 When a user asks for a strategy before they have a book, do not make them
 invent an exit philosophy before supplying the bounded value available now.
-Use this order:
+For a simple strategy question, lead with the bounded value already supported:
 
 ```text
 research-backed baseline
 → applicable strategy-class map
-→ at most one discriminating question, last
+→ any question whose answer could change the recommendation
 ```
 
 The baseline is the narrowly scoped authority in
@@ -87,24 +91,20 @@ long-horizon policy, do not leak a tactical percentage stop into its governance;
 changed liquidity, goal, explicit allocation target, or vehicle facts are the
 relevant alternatives.
 
-Only after the baseline and map, ask one question that separates the remaining
-live branches, if one remains. For example: “Is this capital separated from a
-known spending need, or are you deliberately making a tactical learning
-trade?” Do not ask “what is your stop?” for a standing long-horizon policy.
+Ask only questions that separate remaining live branches. Usually the baseline
+and map should reach the user before an intake detour, but natural dialogue and
+decision value determine placement; there is no universal count or last-slot rule.
+For example: “Is this capital separated from a known spending need, or
+are you deliberately making a tactical learning trade?” Do not ask “what is
+your stop?” for a standing long-horizon policy.
 
-This research-aware strategy framing **replaces** the three-question sequence
-below. It asks zero or one discriminating question, and that question is last.
-No question is allowed before the strategy-class map.
+## Question heuristics
 
-## The three questions
-
-For an ordinary, non-research-aware single-trade framing, ask at most three,
-and fewer when the user's opening message already answered one. Never re-ask a
-known answer. Offer concrete options plus `not sure / depends`; reserve free
-text for the user's own reason or exit condition. The design principle behind
-every branch below: **a different answer does not change the wording, it
-changes which challenge the answer is about.** A question whose answers produce
-the same visible output is a defect, not a reflection exercise.
+For an ordinary single-trade framing, these are useful candidate questions,
+not a required sequence or count. Never re-ask a known answer. Ask only what
+could change the recommendation, and offer concrete options plus `not sure /
+depends` when that makes the branch easier to answer. A question whose answers
+produce the same visible output is a defect, not a reflection exercise.
 
 ### Q1 — how important is this position, and what size is intended
 
@@ -147,7 +147,8 @@ With no recorded book, intended size is a user-declared target or an importance 
 
 ## What the answer owes, and the shape it owes it in
 
-A limitation must reach the user in a form they can act on. Prefer the question:
+A limitation must reach the user in a form they can act on. A question can be
+more useful than narration when the user can answer it directly:
 
 > Are your three largest positions already the same bet?
 
@@ -159,7 +160,9 @@ Both are honest; only the first gives the user something to answer. The discrimi
 
 Three rules follow, and the third is the one that keeps the first two honest:
 
-1. Pick the one portfolio fact this decision actually turns on and ask about it. Weight, concentration, cash and rule collisions are not a checklist to recite; salience selects, exactly as it does for engine facts elsewhere.
+1. Select material portfolio facts by salience, not as a checklist. State them
+   as limitations or ask about them according to whichever form best advances
+   the recommendation.
 2. A limitation that cannot be turned into a question is stated plainly and once — "I have secondary reporting, not the filing" — when it could change the framing or prevent a false impression of coverage. Put a truth-critical denominator, unit, or pricing set beside its number; place other material limitations where they make the answer clearest ([expression contract](../../../docs/expression-contract.md) D1–D2).
 3. A material limitation may never simply disappear. Dropping the narration is a change of shape, not permission to leave a decision-relevant gap unsaid.
 
@@ -178,9 +181,13 @@ The invitation names the question the evidence would answer, never the data bein
 4. **Whether it breaks a rule already set.** Collision with the user's own recorded rules.
 5. **What happened the last time this reason was given.** The only one a positions snapshot cannot buy — it needs transaction history.
 
-At most one per answer, chosen by salience — whichever of the five the user's own answers made central to this decision. Two invitations in one answer is the disclosure-dump failure the shape rules above already forbid. When none of the five is decision-central, the honest move is to say nothing; a manufactured invitation is the same defect as a manufactured disclosure.
+Choose invitations by salience — whichever of the five the user's own answers
+made central to this decision. There is no numeric cap, but every invitation
+must be capable of changing the recommendation; a list that does not earn its
+space is still a disclosure dump. When none is decision-central, say nothing.
 
-Placement is conversational rather than fixed: ask at most one invitation, at the point where its answer naturally branches the recommendation. A useful answer is never withheld until data arrives.
+Placement is conversational rather than fixed: ask at the point where the answer naturally branches the recommendation.
+A useful answer is never withheld until data arrives.
 
 A holdings view buys the first four; transaction history alone buys the fifth, and nothing else does — name the evidence that would settle the question, never data in general. The wording is illustrative, not a template:
 
@@ -190,10 +197,15 @@ Not "provide your portfolio for a more accurate analysis".
 
 ## Red lines, unchanged and hardest to hold here
 
-- **No price target or market forecast.** A recommendation is allowed, but its confidence must reflect that portfolio fit, concentration, cash, and rule collisions were not computed. An analyst target found during lookup does not enter the answer.
-- **A missing number is never replaced by a general rule.** A single-position cap is a fact measured against a computed weight and overridable by the user's own `set-cap`. Stated with no book, the identical sentence becomes fortune telling — the user may already be far past it, and nothing here knows that. The same bar rules out prescribing staged entry, a size ceiling, or a leverage rule.
+- **Targets and forecasts remain judgment.** A recommendation is allowed, but
+  its confidence must reflect that portfolio fit, concentration, cash, and
+  rule collisions were not computed. State a target or forecast only when it
+  is decision-relevant, with assumptions and uncertainty; an analyst target
+  never becomes an engine fact or certainty merely because it was found.
+- **A missing number is never replaced by a general rule.** A single-position cap is a fact measured against a computed weight and overridable by the user's own `set-cap`. Stated as this user's remaining capacity with no book, the identical sentence becomes fortune telling — the user may already be far past it, and nothing here knows that. A staged-entry, size, or leverage heuristic may still be recommended as labelled judgment; it must not impersonate a computed fact about this book.
 - **"So should I buy it?"** gets the best bounded answer available: recommend, delay, or decline based on the stated premise and evidence, then name the portfolio fact most likely to reverse that judgment. Do not hide behind “the decision is yours,” and do not manufacture portfolio precision.
-- **Brevity is not a licence to drop a fact.** It bounds what the answer produces, never what it owes, and the shape rules above are how both hold at once.
+- **Brevity is not a licence to drop a fact.** Text-first is a default, never a
+  limit on which claims the answer owes.
 
 ## Nothing is persisted
 

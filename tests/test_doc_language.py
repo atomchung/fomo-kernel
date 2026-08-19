@@ -137,12 +137,12 @@ NO_BOOK_FRAMING_REQUIRED_PHRASES = (
     # The failure mode that makes it a thin `TradeEvaluation` instead of a
     # separate outcome -- absent, not zero-valued, not a placeholder.
     "no computed or placeholder portfolio number",
-    # The disclosure shape. Dropping the narration is a change of form, never
-    # permission to leave a decision-relevant gap unsaid.
-    "shaped as a question the user can answer rather than a gap narrated back at them",
+    # A missing book narrows portfolio claims without blocking other supported
+    # reasoning or recommendation.
+    "may still research and recommend from supported non-portfolio evidence",
     # Why the route is worth having: it earns the next piece of evidence by
     # naming what that evidence buys, rather than withholding an answer.
-    "naming the specific answer the next piece of evidence would buy",
+    "names the specific answer the next piece of evidence would buy",
 )
 # #598 follow-up (owner ruling 2026-07-30): the closing invitation inside
 # decision-framing.md's own "Earning the next piece of evidence" section is a
@@ -156,14 +156,12 @@ EVIDENCE_INVITATION_SECTIONS = {
     Path("skills/fomo-kernel/references/decision-framing.md"): "## Earning the next piece of evidence",
 }
 EVIDENCE_INVITATION_REQUIRED_PHRASES = (
-    # The selection rule: at most one invitation, picked by whichever of the
-    # five the user's own answers made central -- never one per branch. A
-    # presence check is what is available for prose; there is no schema or
-    # validator over a host's freeform answer text.
-    "At most one per answer, chosen by salience",
+    # Selection is relevance-driven rather than a universal numeric quota.
+    "Choose invitations by salience",
+    "There is no numeric cap",
     # Placement follows the branch it creates rather than a fixed tail slot.
     # The answer still cannot be withheld until the data arrives.
-    "at the point where its answer naturally branches the recommendation",
+    "at the point where the answer naturally branches the recommendation",
     # The fifth item's exclusivity: a holdings view cannot buy it, only
     # transaction history can. A careless edit widening this to "a holdings
     # view also buys it" would send a host after evidence the route never

@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Corpus loader, plan builder, and scorer for the trigger-reliability matrix (#458).
+"""Current v2 trigger-corpus validator and release gate (#827).
 
-#458 exists because "the pre-trade capability is not shipped on a host/language
-where an explicit request silently receives a generic assistant answer" is
-otherwise undetectable -- a host either routes an opening message into the
-fomo-kernel skill or it does not, and nothing today records which. This module
-is the instrument, not the measurement: it owns the corpus format, validates
-it, builds the attempt plan, and scores a result file against the release
-thresholds. It never runs a host and never will -- see "Why there is no --live
-flag" below.
+The v2 decision lane triggers for a named-security investment decision or an
+explicit request to discover investment candidates. Pure education and general
+market-data lookup remain outside the skill. This module validates the blinded
+v2 corpus, builds a host-attempt plan, records observed routes, and scores each
+host/locale/split cell. It never runs a host or reaches a network.
 
 ## The corpus is per locale, not per (host, locale)
 
@@ -26,16 +23,13 @@ every locale in the corpus (`build_report` below), never by adding files.
 
 ## Three prompt classes, two splits, one fixed denominator
 
-Every `<locale>/<split>.json` carries exactly 20 `review_positive`, 20
-`pre_trade_positive`, and 20 `adjacent_negative` prompts (`PROMPTS_PER_CLASS`).
+Every `<locale>/<split>.json` carries exactly six `named_security_decision`,
+six `candidate_discovery`, and six `adjacent_negative` prompts.
 `load_corpus()` proves this by count rather than trusting the author, and
-proves calibration/holdout disjointness by both prompt id and normalized text
--- "the runner must prove it rather than trusting the author" from the issue,
-taken literally. The three release thresholds (`MIN_CORRECT`) are all
-expressed as "at least N of the fixed 20 are correct", which is why a partial
-sample is never scored: recall against a 20-prompt corpus is not knowable from
-15 attempts, so `evaluate_class` reports `incomplete` rather than computing a
-rate against a smaller denominator and calling it done.
+proves calibration/holdout disjointness by both prompt id and normalized text.
+Every v2 threshold requires all six fixed prompts in its class, so a partial
+sample is never scored: `evaluate_class` reports `incomplete` rather than
+computing a rate against a smaller denominator and calling it done.
 
 ## The result format is an append-only per-attempt log, not a summary file
 
@@ -69,14 +63,10 @@ everything that can honestly run before it, and it never leaves the local
 filesystem or imports anything that could reach a network (`test_triggers.py`
 greps this file for exactly that).
 
-## What this module does not decide
-
-`score`'s gate tells you whether the *measured* surface meets the release
-thresholds. It does not, and must not, decide the two product questions #458
-reserves for the M1 integration owner after the holdout evidence exists: what
-`skills/fomo-kernel/SKILL.md`'s trigger description should say, and whether a
-second thin entry point is warranted. Both require editing runtime files this
-module's tests refuse to touch.
+The pre-#827 corpus at `evals/triggers/corpus/` is archival evidence. This
+runner intentionally defaults to `corpus-v2/` and refuses corpus files or
+attempt rows without the exact v2 version stamp, so old labels cannot silently
+become current release authority.
 
 Usage:
   python3 evals/triggers/run_triggers.py validate
@@ -84,7 +74,7 @@ Usage:
   python3 evals/triggers/run_triggers.py record --result-file out.jsonl \\
       --host codex --host-version "0.45.0" --model "GPT-5.6 Codex" \\
       --skill-population "fomo-kernel" --locale zh-TW --split holdout \\
-      --prompt-id zh-TW-hold-pre-03 --actual-route pre_trade --raw-outcome "..."
+      --prompt-id v2-zh-TW-hold-dec-03 --actual-route trigger --raw-outcome "..."
   python3 evals/triggers/run_triggers.py score --result-file out.jsonl
 """
 from __future__ import annotations
@@ -97,7 +87,8 @@ import pathlib
 import sys
 
 TRIGGERS_DIR = pathlib.Path(__file__).resolve().parent
-DEFAULT_CORPUS_DIR = TRIGGERS_DIR / "corpus"
+DEFAULT_CORPUS_DIR = TRIGGERS_DIR / "corpus-v2"
+CORPUS_VERSION = "v2"
 
 # #458's Matrix section. Locales are the corpus dimension (see module
 # docstring); hosts are an execution dimension carried only in the result log,
@@ -107,35 +98,38 @@ DEFAULT_CORPUS_DIR = TRIGGERS_DIR / "corpus"
 # tool should not need editing every time a new host shows up).
 LOCALES = ("en", "zh-TW", "zh-CN")
 SPLITS = ("calibration", "holdout")
-CLASSES = ("review_positive", "pre_trade_positive", "adjacent_negative")
-PROMPTS_PER_CLASS = 20
+CLASSES = ("named_security_decision", "candidate_discovery", "adjacent_negative")
+PROMPTS_PER_CLASS = 6
+CLASS_ID_TAGS = {
+    "named_security_decision": "dec",
+    "candidate_discovery": "dis",
+    "adjacent_negative": "neg",
+}
 HOSTS = ("claude_code", "codex", "antigravity")
-ROUTES = ("review", "pre_trade", "no_trigger")
+ROUTES = ("trigger", "no_trigger")
 # What an adjacent_negative prompt sits near, for coverage reporting: pure
 # market/research/education content that is not closer to either positive
 # class reads as "general" (see test_triggers.py's boundary-coverage check).
-NEAR_MISS_TARGETS = ("review_positive", "pre_trade_positive", "general")
+NEAR_MISS_TARGETS = ("named_security_decision", "candidate_discovery", "general")
 
 EXPECTED_ROUTE_BY_CLASS = {
-    "review_positive": "review",
-    "pre_trade_positive": "pre_trade",
+    "named_security_decision": "trigger",
+    "candidate_discovery": "trigger",
     "adjacent_negative": "no_trigger",
 }
 
-# The three release thresholds (#458), expressed uniformly as "at least N of
-# 20 are correct" so one comparison implements both framings in the issue
-# text: review/pre_trade read this as recall; adjacent_negative reads it as
-# 20 minus the false-trigger count (at most 1/20 false triggers == at least
-# 19/20 correctly not triggering).
+# The compact v2 holdout is fail-closed: every prompt in every class must route
+# correctly before a host/locale cell can become release evidence.
 MIN_CORRECT = {
-    "review_positive": 18,
-    "pre_trade_positive": 19,
-    "adjacent_negative": 19,
+    "named_security_decision": 6,
+    "candidate_discovery": 6,
+    "adjacent_negative": 6,
 }
 
 PROMPT_FIELDS = {"id", "class", "text", "note", "near_miss_of"}
 REQUIRED_ATTEMPT_FIELDS = {
-    "host", "host_version", "model", "installed_skill_population", "locale",
+    "schema_version", "corpus_version", "ts", "host", "host_version", "model",
+    "installed_skill_population", "locale",
     "split", "prompt_id", "class", "expected_route", "actual_route", "raw_outcome",
 }
 
@@ -163,7 +157,7 @@ def corpus_path(corpus_dir, locale, split):
 def validate_prompt(raw, path, index):
     """Structural validation for one prompt entry. Fail-closed: a typo must
     surface as a problem, never as a silently-dropped or silently-miscounted
-    prompt (which would corrupt the exact-20 count check downstream)."""
+    prompt (which would corrupt the exact-count check downstream)."""
     problems = []
 
     def require(condition, message):
@@ -204,9 +198,13 @@ def load_corpus_file(corpus_dir, locale, split):
     if not isinstance(raw, dict):
         return [], [f"{path}: corpus file must be a JSON object"]
     problems = []
-    unknown = set(raw) - {"locale", "split", "prompts"}
+    unknown = set(raw) - {"version", "locale", "split", "prompts"}
     if unknown:
         problems.append(f"{path}: unknown top-level field(s): {sorted(unknown)}")
+    if raw.get("version") != CORPUS_VERSION:
+        problems.append(
+            f"{path}: version field {raw.get('version')!r} does not match current release corpus "
+            f"({CORPUS_VERSION!r})")
     if raw.get("locale") != locale:
         problems.append(f"{path}: locale field {raw.get('locale')!r} does not match its own directory ({locale!r})")
     if raw.get("split") != split:
@@ -237,6 +235,20 @@ def load_corpus_file(corpus_dir, locale, split):
         if found != PROMPTS_PER_CLASS:
             problems.append(
                 f"{path}: class {class_name!r} has {found} prompt(s), expected exactly {PROMPTS_PER_CLASS}")
+        split_tag = "cal" if split == "calibration" else "hold"
+        prefix = f"v2-{locale}-{split_tag}-{CLASS_ID_TAGS[class_name]}-"
+        expected_ids = {f"{prefix}{index:02d}" for index in range(1, PROMPTS_PER_CLASS + 1)}
+        actual_ids = {item["id"] for item in prompts if item["class"] == class_name}
+        if actual_ids != expected_ids:
+            problems.append(
+                f"{path}: class {class_name!r} ids do not match the v2 locale/split sequence")
+    negative_targets = {
+        item.get("near_miss_of") for item in prompts
+        if item["class"] == "adjacent_negative"
+    }
+    if negative_targets != set(NEAR_MISS_TARGETS):
+        problems.append(
+            f"{path}: adjacent_negative must cover every near-miss target {NEAR_MISS_TARGETS}")
     if problems:
         return [], problems
     return prompts, []
@@ -244,8 +256,7 @@ def load_corpus_file(corpus_dir, locale, split):
 
 def load_corpus(corpus_dir=DEFAULT_CORPUS_DIR):
     """Returns ``(corpus, problems)``. ``corpus[locale][split]`` is a list of
-    prompt dicts. Every mechanical proof #458 asks for happens here: exact
-    20/20/20 counts per file (``load_corpus_file``), calibration/holdout
+    prompt dicts. The current v2 gate proves exact per-class counts, calibration/holdout
     disjointness by id *and* by normalized text, and id uniqueness across the
     *entire* corpus (catches a copy-paste across a locale or split boundary
     that a per-file check cannot see). A non-empty ``problems`` means the
@@ -319,6 +330,7 @@ def build_plan(corpus, hosts, locales, splits):
             for split in splits:
                 for prompt in corpus[locale][split]:
                     attempts.append({
+                        "corpus_version": CORPUS_VERSION,
                         "host": host,
                         "locale": locale,
                         "split": split,
@@ -371,6 +383,7 @@ def build_attempt(corpus, *, locale, split, prompt_id, host, host_version, model
         [part.strip() for part in (skill_population or "").split(",") if part.strip()]
     return {
         "schema_version": 1,
+        "corpus_version": CORPUS_VERSION,
         "ts": ts or _now_iso(),
         "host": host,
         "host_version": host_version,
@@ -402,11 +415,10 @@ def append_attempt(result_file, attempt):
 
 def read_result_file(path):
     """Returns ``(attempts, problems)``. A malformed line is reported, never
-    silently skipped -- but does not abort reading the rest of the file, so a
-    single bad line cannot hide every attempt recorded around it. Score's gate
-    verdict stays fail-closed regardless: a dropped line just becomes an
-    attempt that never happened, which the completeness check already treats
-    as ``incomplete``/``not_run`` rather than a pass."""
+    silently skipped. The reader continues to report every bad line, but
+    ``score`` refuses the whole result file when any problem exists: a stale or
+    malformed last-write-wins correction may never be dropped behind an older
+    passing row."""
     path = pathlib.Path(path)
     if not path.is_file():
         return [], [f"{path}: result file not found"]
@@ -427,14 +439,50 @@ def read_result_file(path):
         if missing:
             problems.append(f"{path}:{line_number}: missing field(s): {sorted(missing)}")
             continue
+        unknown = set(row) - REQUIRED_ATTEMPT_FIELDS
+        if unknown:
+            problems.append(f"{path}:{line_number}: unknown field(s): {sorted(unknown)}")
+            continue
+        if row["schema_version"] != 1:
+            problems.append(f"{path}:{line_number}: schema_version must be 1")
+            continue
+        if row["corpus_version"] != CORPUS_VERSION:
+            problems.append(
+                f"{path}:{line_number}: corpus_version {row['corpus_version']!r} "
+                f"does not match current gate {CORPUS_VERSION!r}")
+            continue
         if row["actual_route"] not in ROUTES:
             problems.append(f"{path}:{line_number}: actual_route {row['actual_route']!r} not in {ROUTES}")
             continue
         if row["locale"] not in LOCALES or row["split"] not in SPLITS:
             problems.append(f"{path}:{line_number}: locale/split outside the known corpus dimensions")
             continue
+        string_fields = ("ts", "host", "host_version", "model", "prompt_id", "raw_outcome")
+        if any(not isinstance(row[field], str) or not row[field].strip() for field in string_fields):
+            problems.append(f"{path}:{line_number}: string identity/outcome fields must be non-empty")
+            continue
+        if (not isinstance(row["installed_skill_population"], list)
+                or not all(isinstance(value, str) for value in row["installed_skill_population"])):
+            problems.append(f"{path}:{line_number}: installed_skill_population must be a string array")
+            continue
         attempts.append(row)
     return attempts, problems
+
+
+def validate_attempts_against_corpus(corpus, attempts):
+    """Bind hand-edited result rows back to the current frozen expectation."""
+    problems = []
+    for index, row in enumerate(attempts, 1):
+        prompts = corpus[row["locale"]][row["split"]]
+        prompt = next((item for item in prompts if item["id"] == row["prompt_id"]), None)
+        if prompt is None:
+            problems.append(f"result row {index}: prompt_id is not in its current locale/split corpus")
+            continue
+        expected_route = EXPECTED_ROUTE_BY_CLASS[prompt["class"]]
+        if row["class"] != prompt["class"] or row["expected_route"] != expected_route:
+            problems.append(
+                f"result row {index}: class/expected_route disagree with the current corpus")
+    return problems
 
 
 def fold_attempts(attempts):
@@ -453,11 +501,10 @@ def fold_attempts(attempts):
 # ─────────────────────────────── scoring ──────────────────────────────────────
 
 def evaluate_class(expected_ids, cell_attempts, class_name):
-    """The threshold arithmetic (#458's three release thresholds), and the
+    """The v2 threshold arithmetic and the
     not-run/incomplete/complete status a cell can be in. Pure and
     side-effect-free so it is directly unit-testable against synthetic
-    fixtures, including the exact boundary the task specifies (18/20 passes
-    review_positive, 17/20 fails it).
+    fixtures, including the all-prompts-required release boundary.
 
     ``expected_ids``: the corpus's fixed ``PROMPTS_PER_CLASS`` prompt ids for
     this (locale, split, class). ``cell_attempts``: prompt_id -> folded
@@ -465,28 +512,31 @@ def evaluate_class(expected_ids, cell_attempts, class_name):
 
     A cell is:
       not_run     zero of the expected prompts have a recorded attempt.
-      incomplete  some but not all 20 have one -- recall against a 20-prompt
-                  corpus is not knowable from fewer, so this is reported
+      incomplete  some but not all prompts have one -- accuracy against the
+                  complete corpus is not knowable from fewer, so this is reported
                   distinctly and never scored, extending "not run never reads
                   as a pass" to a partial sample rather than only to zero.
-      complete    all 20 attempted -- ``verdict`` is the only state that may
+      complete    every prompt attempted -- ``verdict`` is the only state that may
                   be "pass".
     """
     total = len(expected_ids)
     attempted_ids = [pid for pid in expected_ids if pid in cell_attempts]
     attempted = len(attempted_ids)
     if attempted == 0:
-        return {"status": "not_run", "attempted": 0, "total": total, "correct": None, "verdict": None}
+        return {"status": "not_run", "attempted": 0, "total": total,
+                "correct": None, "accuracy": None, "verdict": None}
     correct = sum(
         1 for pid in attempted_ids
         if cell_attempts[pid]["actual_route"] == EXPECTED_ROUTE_BY_CLASS[class_name]
     )
     if attempted < total:
         return {"status": "incomplete", "attempted": attempted, "total": total,
-                "correct": correct, "verdict": None}
+                "correct": correct, "accuracy": correct / total if total else None,
+                "verdict": None}
     passed = correct >= MIN_CORRECT[class_name]
     return {"status": "complete", "attempted": attempted, "total": total,
-            "correct": correct, "verdict": "pass" if passed else "fail"}
+            "correct": correct, "accuracy": correct / total if total else None,
+            "verdict": "pass" if passed else "fail"}
 
 
 def build_report(corpus, attempts, hosts, locales, splits):
@@ -544,7 +594,8 @@ def _print_problems(problems):
 def _format_cell(cell):
     if cell["status"] in ("not_run", "incomplete"):
         return f"{cell['status']}({cell['attempted']}/{cell['total']})"
-    return f"{cell['correct']}/{cell['total']}:{cell['verdict']}"
+    return (f"{cell['correct']}/{cell['total']}="
+            f"{cell['accuracy'] * 100:.1f}%:{cell['verdict']}")
 
 
 def cmd_validate(args):
@@ -554,7 +605,7 @@ def cmd_validate(args):
         print(f"\nFAIL: corpus is not valid ({len(problems)} problem(s)).")
         return 1
     total = corpus_totals(corpus)
-    print(f"PASS: corpus valid -- {total} prompts across {len(LOCALES)} locale(s) x {len(SPLITS)} split(s), "
+    print(f"PASS: {CORPUS_VERSION} corpus valid -- {total} prompts across {len(LOCALES)} locale(s) x {len(SPLITS)} split(s), "
           f"exactly {PROMPTS_PER_CLASS} per class per file, calibration/holdout disjoint by id and "
           f"normalized text in every locale, no duplicate id anywhere in the corpus.")
     return 0
@@ -641,11 +692,13 @@ def cmd_score(args):
         emit("\nFAIL: corpus is not valid; refusing to score against it.")
         return 2
     attempts, read_problems = read_result_file(args.result_file)
+    read_problems.extend(validate_attempts_against_corpus(corpus, attempts))
     if read_problems:
         for problem in read_problems:
             emit(f"FAIL  {problem}")
-        emit(f"NOTE  {len(read_problems)} line(s) in the result file could not be read; they are "
-             "excluded from scoring, not treated as passing attempts.\n")
+        emit(f"\nFAIL: {len(read_problems)} unreadable or stale result row(s); refusing to score "
+             "a partial append-only history.")
+        return 2
 
     hosts = _split_csv(args.hosts) or list(HOSTS)
     locales = _split_csv(args.locales) or list(LOCALES)
@@ -712,7 +765,7 @@ def build_parser():
 
     record = subparsers.add_parser(
         "record",
-        help="append one already-observed attempt outcome to a result file; the opt-in step, "
+        help="append one already-observed v2 attempt outcome to a result file; the opt-in step, "
              "and the only subcommand that writes to a result file")
     record.add_argument("--result-file", required=True)
     record.add_argument("--host", required=True, help="free-form host id, e.g. claude_code, codex, antigravity")
@@ -728,14 +781,13 @@ def build_parser():
     record.set_defaults(handler=cmd_record)
 
     score = subparsers.add_parser(
-        "score", help="compute per-cell review/pre_trade/adjacent_negative rates from a result file")
+        "score", help="compute per-cell v2 trigger/no-trigger accuracy from a result file")
     score.add_argument("--result-file", required=True)
     score.add_argument("--hosts", help=f"comma-separated, default: {','.join(HOSTS)} plus any host actually observed")
     score.add_argument("--locales", help=f"comma-separated, default: {','.join(LOCALES)}")
     score.add_argument("--splits", help=f"comma-separated, default: {','.join(SPLITS)}")
     score.add_argument("--gate-split", default="holdout", choices=SPLITS,
-                        help="which split's cells decide the exit code (default: holdout, per #458's "
-                             "release-decision scope)")
+                        help="which split's cells decide the exit code (default: blind v2 holdout)")
     score.add_argument("--out", help="optional path to write the computed report as JSON")
     score.add_argument("--json", action="store_true", help="print rows as JSON instead of a summary table")
     score.set_defaults(handler=cmd_score)

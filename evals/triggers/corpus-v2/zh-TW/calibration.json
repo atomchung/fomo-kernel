@@ -1,0 +1,27 @@
+{
+  "version": "v2",
+  "locale": "zh-TW",
+  "split": "calibration",
+  "prompts": [
+    {"id":"v2-zh-TW-cal-dec-01","class":"named_security_decision","text":"微軟下次財報前值得買進嗎？","note":"點名證券並要求買進判斷。"},
+    {"id":"v2-zh-TW-cal-dec-02","class":"named_security_decision","text":"我對 Tesla 的投資理由動搖了，現在該減碼還是續抱？","note":"點名證券並提出減碼或持有決策。"},
+    {"id":"v2-zh-TW-cal-dec-03","class":"named_security_decision","text":"從目前來看，Amazon 適合持有三年嗎？","note":"點名證券、期限與投資判斷。"},
+    {"id":"v2-zh-TW-cal-dec-04","class":"named_security_decision","text":"這裡沒有我的持倉資料，你還會建議我現在加碼 Nvidia 嗎？","note":"缺少帳本不應阻止點名證券決策。"},
+    {"id":"v2-zh-TW-cal-dec-05","class":"named_security_decision","text":"這筆新資金該買 Apple，還是等待更好的價位？","note":"點名證券與明確資金選擇。"},
+    {"id":"v2-zh-TW-cal-dec-06","class":"named_security_decision","text":"AMD 從我買進後跌很多，我該賣出、攤平還是不動？","note":"點名證券並列出實際行動選項。"},
+
+    {"id":"v2-zh-TW-cal-dis-01","class":"candidate_discovery","text":"幫我找一組已獲利、適合持有五年的資安股票。","note":"明確要求發掘投資候選。"},
+    {"id":"v2-zh-TW-cal-dis-02","class":"candidate_discovery","text":"篩選自由現金流正在改善的再生能源公司，並判斷哪些較值得投資。","note":"帶條件的發掘與選擇請求。"},
+    {"id":"v2-zh-TW-cal-dis-03","class":"candidate_discovery","text":"若想長期配置半導體設備，應該比較哪些上市公司？","note":"為投資決策要求候選集合。"},
+    {"id":"v2-zh-TW-cal-dis-04","class":"candidate_discovery","text":"找三家 Costco 的上市替代標的，並依投資吸引力排序。","note":"明確要求替代標的發掘與排名。"},
+    {"id":"v2-zh-TW-cal-dis-05","class":"candidate_discovery","text":"幫我的退休帳戶觀察清單找收益型 ETF，也說明涵蓋範圍。","note":"沒有起始代號仍是明確候選發掘。"},
+    {"id":"v2-zh-TW-cal-dis-06","class":"candidate_discovery","text":"列出少數利潤率穩定、可能值得買進的美國軟體公司。","note":"明確為潛在買進建立候選清單。"},
+
+    {"id":"v2-zh-TW-cal-neg-01","class":"adjacent_negative","text":"本益比這個指標代表什麼？","note":"沒有決策的純投資教育。","near_miss_of":"named_security_decision"},
+    {"id":"v2-zh-TW-cal-neg-02","class":"adjacent_negative","text":"Nvidia 昨天的官方收盤價是多少？","note":"點名證券但只查市場資料。","near_miss_of":"named_security_decision"},
+    {"id":"v2-zh-TW-cal-neg-03","class":"adjacent_negative","text":"列出目前道瓊工業平均指數的全部成分公司。","note":"只查成分清單，沒有候選選擇意圖。","near_miss_of":"candidate_discovery"},
+    {"id":"v2-zh-TW-cal-neg-04","class":"adjacent_negative","text":"標普 500 能源類股有哪些公司？我只要成分名單。","note":"清單查詢明確排除候選評估。","near_miss_of":"candidate_discovery"},
+    {"id":"v2-zh-TW-cal-neg-05","class":"adjacent_negative","text":"解釋市價單與限價單的差別。","note":"一般交易教育。","near_miss_of":"general"},
+    {"id":"v2-zh-TW-cal-neg-06","class":"adjacent_negative","text":"Nasdaq 正常交易時段按紐約時間幾點開盤？","note":"一般市場時段查詢。","near_miss_of":"general"}
+  ]
+}

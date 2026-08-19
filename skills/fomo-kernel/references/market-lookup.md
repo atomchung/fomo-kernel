@@ -26,7 +26,9 @@ unpriced basis into a current-market claim.
 
 ### L1 — event lookup, on trigger
 
-Look up the current event record only when at least one of these holds and the answer could materially change the question or the judgment:
+For a simple single-security decision, look up the current event record when
+at least one of these holds and the answer could materially change the question
+or the judgment:
 
 1. **`why_now` is missing or vague in a time-sensitive decision** — the user says "today", "now", "after the move", "because of the news" without naming the event. Find the most plausible current event, then *ask* whether it is the actual trigger.
 2. **The user cites a specific current claim** — earnings, guidance, a filing, a launch, a headline. Verify the exact claim and its timing rather than accepting a label like "good earnings".
@@ -57,9 +59,13 @@ All lookup is skipped when:
 - the packet is already answered — do not keep searching past it;
 - the user asked not to browse, or the host has no browse capability: state the gap and ask for the source or the reason instead. Never invent, and never read "nothing found" as "no risk".
 
-Company research is in scope when a named operating, valuation, or event fact
-could change the recommendation. News recaps, sentiment collection,
-market-wide discovery, price targets, and forecasts remain out of scope.
+Company research is in scope when an operating, valuation, event, or comparative
+fact could change the recommendation. When the user explicitly asks for
+candidate discovery, search a stated universe with stated filters and an as-of
+point. Report material exclusions and coverage limits, and never claim the
+search was exhaustive unless the evidence establishes that. A target or
+forecast remains model judgment with assumptions and uncertainty, never a
+public fact merely because a source published one.
 
 ## The neutral query
 
@@ -82,10 +88,12 @@ Prefer the closest source that can answer the packet:
 
 ## Stop discipline
 
-Two limits, and the lookup ends at whichever binds first:
-
-- **Count ceiling:** one primary source, at most one baseline or countercheck. A third retrieval is justified only to resolve a named contradiction. This is the hard latency line on this segment (#603 owns route-level time budgets); it is a budget, not a proof standard.
-- **Sufficiency floor:** stop when the packet's four cells are honestly filled. If the ceiling arrives first, name the empty cells in the answer — "I could not establish the prior baseline" is an honest state, exactly as an `unmapped` condition is. An empty cell is never padded with an inference.
+Stop when the decision-relevant packet or comparison is honestly covered and
+another retrieval has lower marginal value than its cost or latency. Broader
+candidate searches may need more sources than a simple event check; narrower
+ones may need fewer. Report any material empty cells, excluded universe, or
+unresolved contradiction. "I could not establish the prior baseline" is an
+honest state; an empty cell is never padded with an inference.
 
 ## What a found fact may become
 

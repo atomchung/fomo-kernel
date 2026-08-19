@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deterministic contract witnesses for the bounded #715/#716 no-book slice."""
+"""Deterministic contract witnesses for research-aware no-book framing."""
 
 from pathlib import Path
 
@@ -16,19 +16,16 @@ def _section(text, heading):
     return text[start:] if end == -1 else text[start:end]
 
 
-def _answer_order_is_valid(section):
+def _answer_default_is_valid(section):
     baseline = "research-backed baseline"
     strategy_map = "applicable strategy-class map"
-    final_question = "at most one discriminating question, last"
-    forbidden_early_question = "First ask the material exception"
-    before_map = section[:section.index("Then provide only the strategy classes")]
     return (
-        section.index(baseline) < section.index(strategy_map) < section.index(final_question)
-        and forbidden_early_question not in section
-        and "Only after the baseline and map, ask one question" in section
-        and "No question is allowed before the strategy-class map." in section
-        and "?" not in before_map
-        and "\nQuestion" not in before_map
+        section.index(baseline) < section.index(strategy_map)
+        and "lead with the bounded value already supported" in section
+        and "Ask only questions that separate remaining live branches" in section
+        and "there is no universal count or last-slot rule" in section
+        and "No question is allowed before" not in section
+        and "asks zero or one" not in section
     )
 
 
@@ -56,23 +53,24 @@ def test_b_the_guaranteed_no_book_loading_path_reaches_the_catalogue():
     assert PRIORS.is_file()
 
 
-def test_c_visible_value_and_strategy_map_precede_one_final_question():
+def test_c_visible_value_precedes_intake_without_a_question_cap():
     section = _section(
-        FRAMING.read_text(encoding="utf-8"), "## Research-aware answer order")
-    assert _answer_order_is_valid(section)
+        FRAMING.read_text(encoding="utf-8"), "## Research-aware strategy framing")
+    assert _answer_default_is_valid(section)
     assert "Do not ask about liquidity or a stop before the user sees the\nbaseline and map." in section
-    assert "This research-aware strategy framing **replaces** the three-question sequence" in section
-    ordinary = _section(FRAMING.read_text(encoding="utf-8"), "## The three questions")
-    assert "ordinary, non-research-aware single-trade framing" in ordinary
+    ordinary = _section(FRAMING.read_text(encoding="utf-8"), "## Question heuristics")
+    assert "not a required sequence or count" in ordinary
 
 
-def test_d_ordering_regression_reddens_when_any_question_is_restored_before_value():
+def test_d_numeric_question_cap_regression_reddens():
     section = _section(
-        FRAMING.read_text(encoding="utf-8"), "## Research-aware answer order")
-    restored = "Question first: what is your time horizon?"
+        FRAMING.read_text(encoding="utf-8"), "## Research-aware strategy framing")
     mutated = section.replace(
-        "For genuinely long-horizon risk capital", restored + ".\n\nFor genuinely long-horizon risk capital", 1)
-    assert not _answer_order_is_valid(mutated)
+        "there is no universal count or last-slot rule",
+        "ask at most one question, and it must be last",
+        1,
+    )
+    assert not _answer_default_is_valid(mutated)
 
 
 if __name__ == "__main__":

@@ -84,13 +84,14 @@ flowchart LR
 
 ## Explicit non-goals
 
-> Superseded for bounded recommendations on 2026-08-19 by Issue #825's
-> constraint-deletion slice. The consequence and provenance layers now exist,
-> so the agent may recommend or rank user-named and recorded-book candidates.
-> Market forecasts remain a non-goal.
+> Superseded for decision support on 2026-08-19 by Issues #825 and #827. The
+> consequence and provenance layers now exist, so the agent may research,
+> discover, compare, recommend, or rank candidates with or without a recorded
+> book. The book still gates portfolio-derived claims. Forecasts and targets may
+> appear only as labelled judgment with assumptions and uncertainty.
 
 - Cloud account or synchronization system.
-- Market forecasts, price targets, autonomous execution, or open-ended security discovery.
+- Forecasts or targets presented as facts, autonomous execution, or discovery presented as exhaustive.
 - A large portfolio governance wiki.
 - Several simultaneous active rules.
 - A dashboard that replaces the one-card conclusion.
