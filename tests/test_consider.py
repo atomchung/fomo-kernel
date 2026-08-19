@@ -230,18 +230,28 @@ def _check_evaluation_shape(row):
         assert len(refs) <= CONTEXT_SCHEMA["properties"]["evidence_refs"]["maxItems"]
 
     if "agent_case" in row:
-        assert set(row["agent_case"]) == {"for", "against"}
-        for side in ("for", "against"):
-            claims = row["agent_case"][side]
-            assert claims, f"agent_case.{side} must be non-empty once agent_case is sent"
+        case = row["agent_case"]
+        if "recommendation" in case:
+            assert {"recommendation", "support"} <= set(case)
+            assert set(case) <= {"recommendation", "support", "counter_case"}
+            assert case["recommendation"]["provenance"] == "agent_judgment"
+            sections = (("recommendation", [case["recommendation"]]),
+                        ("support", case["support"]),
+                        ("counter_case", case.get("counter_case", [])))
+            assert case["support"], "agent_case.support must be non-empty"
+        else:
+            assert set(case) == {"for", "against"}
+            sections = ((side, case[side]) for side in ("for", "against"))
+            assert all(case[side] for side in ("for", "against"))
+        for section, claims in sections:
             for claim in claims:
                 assert claim["provenance"] in _CLAIM_DEF_BY_PROVENANCE
                 defn = ANSWER_PROVENANCE_SCHEMA["$defs"][_CLAIM_DEF_BY_PROVENANCE[claim["provenance"]]]
                 assert set(defn["required"]) <= set(claim), (
-                    f"{side} claim missing required fields for {claim['provenance']}: "
+                    f"{section} claim missing required fields for {claim['provenance']}: "
                     f"{set(defn['required']) - set(claim)}")
                 assert set(claim) <= set(defn["properties"]), (
-                    f"{side} claim carries fields {claim['provenance']} must not: "
+                    f"{section} claim carries fields {claim['provenance']} must not: "
                     f"{set(claim) - set(defn['properties'])}")
 
 
@@ -1917,7 +1927,7 @@ def test_rule_collision_is_reported_and_a_muted_rule_is_excluded():
 
 # ───────────────────────── H. agent_case ─────────────────────────
 
-def test_agent_case_requires_both_sides():
+def test_incomplete_legacy_agent_case_is_rejected():
     with tempfile.TemporaryDirectory() as tmp:
         case_path = os.path.join(tmp, "case.json")
         with open(case_path, "w", encoding="utf-8") as f:
@@ -1925,14 +1935,17 @@ def test_agent_case_requires_both_sides():
         run = _run("consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
                    "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}',
                    "--agent-case", case_path)
-        _fails(run, "must carry both 'for' and 'against'")
+        _fails(run, "must use recommendation/support/counter_case, or the legacy for/against shape")
 
 
 def test_agent_case_rejects_an_unknown_provenance():
     with tempfile.TemporaryDirectory() as tmp:
         case_path = os.path.join(tmp, "case.json")
         with open(case_path, "w", encoding="utf-8") as f:
-            json.dump({"for": [{"claim": "ok", "provenance": "vibes"}], "against": []}, f)
+            json.dump({
+                "for": [{"claim": "ok", "provenance": "vibes"}],
+                "against": [{"claim": "risk", "provenance": "agent_judgment"}],
+            }, f)
         run = _run("consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
                    "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}',
                    "--agent-case", case_path)
@@ -1965,6 +1978,18 @@ def _valid_agent_case_for_sample_momentum():
     }
 
 
+def _positive_agent_case_for_sample_momentum():
+    legacy = _valid_agent_case_for_sample_momentum()
+    return {
+        "recommendation": {
+            "claim": "Do not add to NVDA at this size.",
+            "provenance": "agent_judgment",
+        },
+        "support": legacy["for"][1:] + legacy["against"],
+        "counter_case": [legacy["for"][0]],
+    }
+
+
 def test_agent_case_is_stored_when_supplied_and_absent_when_not():
     with tempfile.TemporaryDirectory() as tmp:
         case_path = os.path.join(tmp, "case.json")
@@ -1980,6 +2005,37 @@ def test_agent_case_is_stored_when_supplied_and_absent_when_not():
                                 "--premise",
                                 '{"ticker": "NVDA", "side": "buy", "price": 131.0, "qty": 5}'))
         assert "agent_case" not in without_case["evaluation"]
+
+
+def test_positive_recommendation_case_is_stored_and_provenance_checked():
+    with tempfile.TemporaryDirectory() as tmp:
+        case_path = os.path.join(tmp, "case.json")
+        with open(case_path, "w", encoding="utf-8") as f:
+            json.dump(_positive_agent_case_for_sample_momentum(), f)
+        result = _ok(_run(
+            "consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
+            "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}',
+            "--agent-case", case_path))
+        assert result["evaluation"]["agent_case"]["recommendation"]["claim"].startswith("Do not")
+        _check_evaluation_shape(result["evaluation"])
+
+
+def test_positive_recommendation_must_be_agent_judgment():
+    with tempfile.TemporaryDirectory() as tmp:
+        case = _positive_agent_case_for_sample_momentum()
+        case["recommendation"] = {
+            "claim": "Do not add.", "provenance": "engine_fact",
+            "anchor": "consequence.after.max_pct",
+        }
+        case_path = os.path.join(tmp, "case.json")
+        with open(case_path, "w", encoding="utf-8") as f:
+            json.dump(case, f)
+        run = _run(
+            "consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
+            "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}',
+            "--agent-case", case_path)
+        _fails(run, "recommendation must be labelled agent_judgment")
+        assert _read_evaluations(tmp) == []
 
 
 def test_qa_demand_cap_copy_is_not_exposed_through_generic_consider_flags():
@@ -2108,6 +2164,31 @@ def test_consider_never_writes_rules_or_creates_session_scaffolding():
         assert not os.path.exists(os.path.join(tmp, "log.jsonl"))
         # the one file consider is allowed to create
         assert os.path.exists(_evaluation_path(tmp))
+
+
+def test_ephemeral_consider_computes_without_recording_then_selected_call_persists():
+    with tempfile.TemporaryDirectory() as tmp:
+        premise = _collision_root(tmp)
+        exploratory = _ok(_run(
+            "consider", "--root", tmp, "--premise", premise, "--ephemeral"))
+        assert exploratory["append"]["status"] == "ephemeral"
+        assert exploratory["append"]["appended"] == 0
+        assert _read_evaluations(tmp) == []
+
+        selected = _ok(_run("consider", "--root", tmp, "--premise", premise))
+        assert selected["append"]["status"] == "appended"
+        assert len(_read_evaluations(tmp)) == 1
+        assert selected["evaluation"]["evaluation_id"] == exploratory["evaluation"]["evaluation_id"]
+
+
+def test_ephemeral_consider_does_not_accept_csv_as_an_unrecorded_book():
+    with tempfile.TemporaryDirectory() as tmp:
+        run = _run(
+            "consider", str(MOCK / "sample_momentum.csv"), "--root", tmp,
+            "--premise", '{"ticker": "NVDA", "side": "buy", "price": 130.0, "qty": 5}',
+            "--ephemeral")
+        _fails(run, "evaluates the existing recorded book only")
+        assert _read_evaluations(tmp) == []
 
 
 def test_trade_evaluations_is_registered_in_coach_data_files():
@@ -2864,8 +2945,9 @@ def _check_challenge_shape(challenge):
     assert len(set(challenge["unchecked"])) == len(challenge["unchecked"])
 
     assert set(challenge["case_required"]) == set(props["case_required"]["properties"])
-    for side in ("for", "against"):
-        assert challenge["case_required"][side] >= 1
+    assert challenge["case_required"]["recommendation"] == 1
+    assert challenge["case_required"]["support"] >= 1
+    assert challenge["case_required"]["counter_case"] == "when_material"
 
     coverage_props = props["required_coverage"]["items"]["properties"]
     for required in challenge["required_coverage"]:
@@ -2972,7 +3054,8 @@ def test_a_considered_trade_puts_the_whole_challenge_in_front_of_the_caller():
         for owed in ("basis", "position", "concentration", "rule_collision", "disclosure"):
             assert owed in topics, f"nothing in must_state states the {owed}"
         assert challenge["unchecked"], "an answer that names no unchecked risk reads as a clean bill"
-        assert challenge["case_required"] == {"for": 1, "against": 1}
+        assert challenge["case_required"] == {
+            "recommendation": 1, "support": 1, "counter_case": "when_material"}
         assert challenge["required_coverage"], (
             "this book is stale and carries disclosures; the case owes something")
 

@@ -232,16 +232,16 @@ def _segmented_presentation(agent_case, challenge, segments, presented_text):
     if not isinstance(agent_case, dict):
         raise ValueError("candidate agent_case must be an object")
     claims = {}
-    for side in ("for", "against"):
-        side_claims = agent_case.get(side)
-        if not isinstance(side_claims, list) or not side_claims:
-            raise ValueError(f"candidate agent_case.{side} must be a non-empty list")
-        for index, claim in enumerate(side_claims):
-            if not isinstance(claim, dict) or not isinstance(claim.get("claim"), str) \
-                    or not claim["claim"].strip():
-                raise ValueError(
-                    f"candidate agent_case.{side}[{index}].claim must be non-empty text")
-            claims[(side, index)] = claim["claim"]
+    try:
+        case_entries = answer_provenance.agent_case_claims(agent_case)
+    except answer_provenance.AnswerProvenanceError as exc:
+        raise ValueError(str(exc)) from exc
+    for section, index, claim in case_entries:
+        if not isinstance(claim, dict) or not isinstance(claim.get("claim"), str) \
+                or not claim["claim"].strip():
+            raise ValueError(
+                f"candidate agent_case.{section}[{index}].claim must be non-empty text")
+        claims[(section, index)] = claim["claim"]
     if not isinstance(presented_text, str) or not presented_text.strip():
         raise ValueError("candidate presented_text must be non-empty text")
     if not isinstance(segments, list) or not segments:
@@ -286,13 +286,11 @@ def _segmented_presentation(agent_case, challenge, segments, presented_text):
 
         if kind == "claim_ref":
             side, index = segment.get("side"), segment.get("index")
-            if side not in {"for", "against"}:
-                raise ValueError(
-                    f"candidate segments[{position}].side must be for or against")
             if isinstance(index, bool) or not isinstance(index, int) \
                     or (side, index) not in claims:
                 raise ValueError(
-                    f"candidate segments[{position}] claim reference is out of range")
+                    f"candidate segments[{position}] claim reference is out of range "
+                    "for this agent_case shape")
             ref = (side, index)
             if ref in seen_claims:
                 raise ValueError("candidate segments repeat a case claim")
@@ -359,11 +357,9 @@ def _segmented_presentation(agent_case, challenge, segments, presented_text):
     missing_claims = sorted(set(claims) - seen_claims)
     if missing_claims:
         raise ValueError(f"candidate segments omit case claim(s) {missing_claims}")
-    if limitation_count < 1:
-        raise ValueError("candidate segments must contain a limitation segment")
-    if resolution_count != 1:
-        raise ValueError("candidate segments must contain exactly one resolution segment")
-    if last_substantive_kind != "resolution":
+    if resolution_count > 1:
+        raise ValueError("candidate segments may contain at most one resolution segment")
+    if resolution_count == 1 and last_substantive_kind != "resolution":
         raise ValueError("candidate resolution must be the final substantive segment")
     return {
         "segment_count": len(segments),

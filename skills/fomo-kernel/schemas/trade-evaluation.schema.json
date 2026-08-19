@@ -232,7 +232,7 @@
     },
     "agent_case": {
       "$ref": "answer-provenance.schema.json",
-      "description": "Optional structured case for and against the trade, supplied by the caller through --agent-case and checked by engine/answer_provenance.py::validate_agent_case against this row's own frozen basis/consequence/rule_collisions before the row is ever written (#414, wired in by #479 Wave B). Never required, and never free prose -- owner ruling 2026-07-27: the agent lists the case for and against and does not take a position, so a submission missing either side is refused rather than accepted one-sided. The shape is declared once, in answer-provenance.schema.json, and $ref-ed here rather than restated -- the same treatment `premise` and `context` get above. That file's own description explains why the shape could not stay this schema's own additionalProperties:false claim $defs: which fields a claim may carry (`anchor`/`worsens`, or `source`/`as_of`) depends on its provenance, and reconciling the two was Wave B's integration decision."
+      "description": "Optional provenance-checked recommendation case. New rows use recommendation/support/counter_case; the referenced schema also accepts the legacy for/against shape so old append-only history remains readable. The case is checked against this row's frozen basis/consequence/rule_collisions before the row is written."
     }
   }
 }

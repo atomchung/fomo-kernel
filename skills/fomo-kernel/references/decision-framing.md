@@ -27,10 +27,11 @@ facts, questions, and route order below.
 
 ## What the answer is
 
-One bounded framing carrying four things:
+One bounded framing carrying up to four things:
 
-- the strongest case for the decision, and the strongest case against;
-- the decision's key tension — one, leading;
+- a direct recommendation at the confidence the available evidence supports;
+- the support for it, and a counter-case only when material;
+- the decision's key tension when one remains;
 - the user's own stated exit condition, in their words;
 - whichever portfolio fact this decision actually turns on, as a question the user can answer themselves.
 
@@ -51,8 +52,8 @@ research-backed baseline
 The baseline is the narrowly scoped authority in
 [research-priors.md](research-priors.md). Apply only the prior whose
 applicable decision class fits the user's own description; state any material
-exception beside that baseline. A prior never becomes a fund choice,
-allocation, suitability finding, forecast, or buy/sell verdict.
+exception beside that baseline. A prior may support a strategy recommendation,
+but never invents a fund choice, allocation, suitability finding, or forecast.
 
 For genuinely long-horizon risk capital with no supplied concentration edge,
 the available baseline is broad diversification and lower discretionary
@@ -159,18 +160,13 @@ Both are honest; only the first gives the user something to answer. The discrimi
 Three rules follow, and the third is the one that keeps the first two honest:
 
 1. Pick the one portfolio fact this decision actually turns on and ask about it. Weight, concentration, cash and rule collisions are not a checklist to recite; salience selects, exactly as it does for engine facts elsewhere.
-2. A limitation that cannot be turned into a question is stated plainly and once — "I have secondary reporting, not the filing" — and it goes where every other disclosure in this product goes: the tail block, one line, prefixed `[i] `, unless it names the denominator, unit, or pricing set of a number in the body ([expression contract](../../../docs/expression-contract.md) D1–D2). This route rarely has such a number, so in practice a no-book limitation is a block line.
+2. A limitation that cannot be turned into a question is stated plainly and once — "I have secondary reporting, not the filing" — when it could change the framing or prevent a false impression of coverage. Put a truth-critical denominator, unit, or pricing set beside its number; place other material limitations where they make the answer clearest ([expression contract](../../../docs/expression-contract.md) D1–D2).
 3. A material limitation may never simply disappear. Dropping the narration is a change of shape, not permission to leave a decision-relevant gap unsaid.
 
-> **This rule 2 used to say the opposite** — "attached to the claim it
-> qualifies, never grouped into a disclosure block" — which contradicted the
-> review card's own footnote rule with no scope note, so the product carried
-> two disclosure policies at once. Owner ruling 2026-08-14
-> ([#823](https://github.com/atomchung/fomo-kernel/issues/823)) unified them
-> rather than marking this one a no-book exception: what this route actually
-> ruled was *which* limitations are worth stating at all (turn it into a
-> question first), and the placement clause it carried alongside was never a
-> ruling anyone made here.
+> **History:** this rule once required per-claim placement, then #823 replaced
+> it with a universal tail block. Issue #825 removed both formatting mandates:
+> the durable rule is relevance plus truth-critical inline qualification, not
+> a required position or marker.
 
 ## Earning the next piece of evidence
 
@@ -184,7 +180,7 @@ The invitation names the question the evidence would answer, never the data bein
 
 At most one per answer, chosen by salience — whichever of the five the user's own answers made central to this decision. Two invitations in one answer is the disclosure-dump failure the shape rules above already forbid. When none of the five is decision-central, the honest move is to say nothing; a manufactured invitation is the same defect as a manufactured disclosure.
 
-Placement governs a second, distinct question — not which, but where and how many: **one invitation per answer, and it goes last.** It is the closing move of the answer — appended once the framing is complete, never interleaved with the case for and against, and never attached to an individual claim. One round of the conversation, one question answered, at most one invitation, appended at the end. A useful answer is never withheld until data arrives, and an invitation placed mid-answer reads as exactly that precondition on the sentence it interrupts; placed last, after the answer is already complete, it cannot read that way.
+Placement is conversational rather than fixed: ask at most one invitation, at the point where its answer naturally branches the recommendation. A useful answer is never withheld until data arrives.
 
 A holdings view buys the first four; transaction history alone buys the fifth, and nothing else does — name the evidence that would settle the question, never data in general. The wording is illustrative, not a template:
 
@@ -194,9 +190,9 @@ Not "provide your portfolio for a more accurate analysis".
 
 ## Red lines, unchanged and hardest to hold here
 
-- **No price target, no forecast, no buy-or-sell verdict.** The discriminator is whether the sentence states a sourced fact or issues a price or direction verdict. An analyst target found during lookup is a verdict and does not enter the answer.
+- **No price target or market forecast.** A recommendation is allowed, but its confidence must reflect that portfolio fit, concentration, cash, and rule collisions were not computed. An analyst target found during lookup does not enter the answer.
 - **A missing number is never replaced by a general rule.** A single-position cap is a fact measured against a computed weight and overridable by the user's own `set-cap`. Stated with no book, the identical sentence becomes fortune telling — the user may already be far past it, and nothing here knows that. The same bar rules out prescribing staged entry, a size ceiling, or a leverage rule.
-- **"So should I buy it?"** happens every time, and the answer is that the decision is theirs, followed by the strongest case on each side and the one observation their own answers earned. When there are no numbers to state, the cheapest way to sound useful is to state an opinion — which is precisely when this product has the least standing to.
+- **"So should I buy it?"** gets the best bounded answer available: recommend, delay, or decline based on the stated premise and evidence, then name the portfolio fact most likely to reverse that judgment. Do not hide behind “the decision is yours,” and do not manufacture portfolio precision.
 - **Brevity is not a licence to drop a fact.** It bounds what the answer produces, never what it owes, and the shape rules above are how both hold at once.
 
 ## Nothing is persisted

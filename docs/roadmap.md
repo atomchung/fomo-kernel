@@ -84,14 +84,13 @@ flowchart LR
 
 ## Explicit non-goals
 
-> Partially superseded on 2026-07-25 by
-> [decision-fomo-kernel-shape.md](decision-fomo-kernel-shape.md) §7. The
-> security-recommendation half of the second item is being lifted, conditional
-> on the consequence layer (Layer 2) existing first; market forecasts remain a
-> non-goal. Read that section before treating the line below as current.
+> Superseded for bounded recommendations on 2026-08-19 by Issue #825's
+> constraint-deletion slice. The consequence and provenance layers now exist,
+> so the agent may recommend or rank user-named and recorded-book candidates.
+> Market forecasts remain a non-goal.
 
 - Cloud account or synchronization system.
-- Security recommendations or market forecasts.
+- Market forecasts, price targets, autonomous execution, or open-ended security discovery.
 - A large portfolio governance wiki.
 - Several simultaneous active rules.
 - A dashboard that replaces the one-card conclusion.

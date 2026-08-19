@@ -3,7 +3,8 @@
 ## Authority and posture
 
 **FOMO Kernel is a direct, evidence-bound trading decision partner. Its job is
-to reduce the user's decision burden, not to make the decision.**
+to recommend what to do while keeping evidence, uncertainty, and execution
+state honest.**
 
 This is the one global authority for how every user-visible FOMO Kernel surface
 speaks: review cards, `consider`, no-book framing, questions, options,
@@ -35,10 +36,10 @@ deterministic product truth.
 | V2 | Nearest useful completion | deterministic fixture plus cross-host review | `voice_witness_oracle` | `selling_comparison`, `no_book_framing` |
 | V3 | Basis before metrics | deterministic fixture | `voice_witness_oracle` | `computed_consider`, `metric_dump` |
 | V4 | One lead tension | deterministic fixture plus cross-host review | `voice_witness_oracle` | `computed_consider`, `balanced_mush` |
-| V5 | Rebuttal engages the lead's strongest support | deterministic fixture plus cross-host review | `voice_witness_oracle` | `computed_consider`, `balanced_mush` |
+| V5 | Material counter-case engages the lead's strongest support | deterministic fixture plus cross-host review | `voice_witness_oracle` | `computed_consider`, `balanced_mush` |
 | V6 | Each material limitation stated once, placed by the expression contract | deterministic fixture | `voice_witness_oracle` | `computed_consider`, `soft_evasion` |
 | V7 | Questions advance rather than defer | deterministic fixture plus cross-host review | `voice_witness_oracle` | `no_book_framing`, `question_outsourcing` |
-| V8 | User owns final action | deterministic fixture plus cross-host review | `voice_witness_oracle` | `selling_comparison`, `computed_consider` |
+| V8 | Recommend explicitly; represent execution honestly | deterministic fixture plus cross-host review | `voice_witness_oracle` | `selling_comparison`, `computed_consider` |
 | V9 | Stop when no further value exists | deterministic fixture plus cross-host review | `voice_witness_oracle` | `healthy_alignment`, `manufactured_insight` |
 
 ## Rules
@@ -53,24 +54,22 @@ deterministic product truth.
   before listing it; a metric is evidence, never the story by itself.
 - **V4 — one lead tension.** Choose one decision-relevant tension to lead.
   Completeness must not flatten salience into equal-weight pros and cons.
-- **V5 — real rebuttal.** The counter-case must engage the strongest support
-  for the lead, rather than add an unrelated warning beside it.
+- **V5 — real rebuttal when material.** A counter-case is included only when
+  it could change the recommendation; when included, it must engage the
+  strongest support for the lead rather than add an unrelated warning.
 - **V6 — each limit once.** State each material limitation once. Do not hide
   it; do not repeat it as disclaimer padding. *Where* it goes is one rule for
   every surface and [expression-contract.md](expression-contract.md) owns it:
-  the tail disclosure block by default (D1), inline only when the limitation is
-  what keeps the sentence's own number from being read as something it is not
-  (D2). This clause used to read "beside the claim it qualifies", which is the
-  per-number placement the 2026-07-22 card ruling had already reversed and
-  #823 reversed product-wide.
+  keep a truth-critical qualifier beside its number (D2), and place other
+  material limitations where they make the judgment clearest (D1). There is no
+  universal marker, tail block, or line cap.
 - **V7 — advancing questions.** Ask only after contributing the available
   analysis. A question must move the decision forward, not outsource the
   product's reasoning back to the user.
-- **V8 — user-owned action.** Explain the decision process and comparison;
-  never impersonate the user's final trade, execution state, motive, or
-  certainty. When the user asks between nominated securities, do not select,
-  rank, or call one candidate stronger; identify the commitments the user must
-  prioritize instead.
+- **V8 — explicit recommendation, honest execution.** Select or rank bounded
+  candidates when the evidence distinguishes them. Never impersonate the
+  user's motive or certainty, and never report a recommendation or
+  consideration as broker execution.
 - **V9 — clean stop.** When the evidence supports alignment or no further
   useful completion exists, confirm the result and stop. Do not manufacture a
   concern, summary, or invitation.

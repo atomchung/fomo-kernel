@@ -2,25 +2,45 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://fomo-kernel.local/schemas/answer-provenance.schema.json",
   "title": "Fomo Kernel Answer Provenance (issue #414, Wave A)",
-  "description": "The MECHANICAL PROJECTION of the expression contract's C1-C2 onto the one surface that can be checked offline: a structured --agent-case submitted to `consider`. C1 -- every claim is distinguishably the engine's computation, a sourced public fact, or the agent's own judgment -- is the DEFAULT on every user-visible surface (docs/expression-contract.md section 4), not a property of this flag. Reading the flag as the rule is what left the default `consider` path with no provenance discipline at all, which is the #823 diagnosis; this file is where that rule becomes checkable, never where it becomes true. What it checks is the claim envelope engine/answer_provenance.py::validate_agent_case enforces (the readable contract; the module holds the enforcement, the same 'no jsonschema dependency' posture every other schema file in this directory already states about its own hand-rolled checker). This is deliberately a NEW, standalone schema, not an edit to trade-evaluation.schema.json's own $defs.claim: that shape is additionalProperties:false and has no room for the anchor/source/as_of/worsens fields a provenance-checkable claim needs. Reconciling the two -- whether trade-evaluation.schema.json's claim $defs is widened to this shape, versioned, or left as a stricter subset -- is Wave B's integration decision (issue #414's Wave allocation comment), not this module's. Every field a claim carries beyond 'claim' and 'provenance' depends on which provenance it declares; see the three $defs below.",
+  "description": "Mechanical provenance contract for a structured --agent-case submitted to consider. The preferred shape states one recommendation, non-empty support, and a counter_case only when material. Every claim remains distinguishably an engine computation, sourced public fact, or agent judgment. The legacy for/against shape stays readable so append-only evaluation history remains valid; new callers should use positiveCase.",
   "type": "object",
-  "additionalProperties": false,
-  "required": ["for", "against"],
-  "properties": {
-    "for": {
-      "type": "array",
-      "minItems": 1,
-      "description": "Case FOR the trade. Never empty once agent_case is sent at all (owner ruling 2026-07-27, restated by #414: a one-sided submission is refused).",
-      "items": {"$ref": "#/$defs/claim"}
-    },
-    "against": {
-      "type": "array",
-      "minItems": 1,
-      "description": "Case AGAINST the trade. Never empty -- see 'for'.",
-      "items": {"$ref": "#/$defs/claim"}
-    }
-  },
+  "oneOf": [
+    {"$ref": "#/$defs/positiveCase"},
+    {"$ref": "#/$defs/legacyCase"}
+  ],
   "$defs": {
+    "positiveCase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["recommendation", "support"],
+      "properties": {
+        "recommendation": {
+          "allOf": [{"$ref": "#/$defs/judgmentClaim"}],
+          "description": "One explicit action judgment. Its provenance is agent_judgment; measured and public facts belong in support."
+        },
+        "support": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/claim"},
+          "description": "The facts and reasoning that make the recommendation useful."
+        },
+        "counter_case": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/claim"},
+          "description": "Optional. Include only an objection that could materially change the recommended action; an empty array is valid."
+        }
+      }
+    },
+    "legacyCase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["for", "against"],
+      "properties": {
+        "for": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/claim"}},
+        "against": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/claim"}}
+      },
+      "description": "Read compatibility for evaluations recorded before the positive contract."
+    },
     "claim": {
       "oneOf": [
         {"$ref": "#/$defs/engineFactClaim"},

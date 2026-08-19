@@ -212,10 +212,13 @@ read by no mechanical consumer, and repeatedly invited misreading.
   *and* free-form answers have a mechanical provenance gate (#414). The ban is
   itself ungated, resting on `SKILL.md` and `card-policy.md` text — an answer
   surface without its own gate would be the loosest point in the system.
+  Both gates exist; Issue #825's 2026-08-19 deletion slice therefore lifts the
+  live-decision ban while preserving provenance, portfolio arithmetic, privacy,
+  canonical writes, and honest execution state.
 - **Eval shape ships in the same PR as the capability**: the researched tier
   (#412) landed with adversarial episodes for a criterion restated as a yes/no
-  query, an uncheckable condition falling to `unmapped`, and two-sided
-  reasoning carrying both sides. Weaker than it sounds — a check with no
+  query, an uncheckable condition falling to `unmapped`, and grounded
+  reasoning carrying its evidence. Weaker than it sounds — a check with no
   exercising episodes prints a `NOTE`, never a failure, so a capability can
   ship uncovered with CI green.
 - **Bundle the minimum regression with the owning change; batch test-system

@@ -26,7 +26,7 @@ Three registries live here:
 | Series | Owns | Where the rules are |
 |---|---|---|
 | **V1–V9** | Voice: what an answer leads with, what it may not manufacture, when it stops. | [output-voice.md](output-voice.md) — routed, never copied. |
-| **D1–D6** | Disclosure placement: one block, where it sits, how it is prefixed, how long it may be. | §3 below. |
+| **D1–D6** | Disclosure relevance: what materially qualifies a claim, without a fixed answer template. | §3 below. |
 | **C1–C4** | Citation and provenance: how a claim says where it came from. | §4 below. |
 
 Voice stays in its own file rather than being folded in here because V1–V9 are
@@ -51,7 +51,7 @@ Out of scope here, and unchanged by this file:
   answer *produces*. Nothing here licenses dropping a fact to satisfy a line
   cap; see D5.
 
-## 3. Disclosure placement (D1–D6)
+## 3. Disclosure relevance (D1–D6)
 
 A disclosure is a sentence about the *limits* of what was just said: the book
 it was measured on, the session it was priced at, the part of the denominator
@@ -60,38 +60,28 @@ a fact the user asked for.
 
 | ID | Rule | Verification class | Named oracle |
 |---|---|---|---|
-| D1 | One block, after what it qualifies | deterministic fixture | `expression_oracle` (E-1) |
+| D1 | Put a material limitation where it is clearest | instruction only | — |
 | D2 | Truth-critical qualifiers stay inline, and only those | instruction only | — |
-| D3 | Fixed line prefix, from the registry | deterministic fixture | `expression_oracle` (E-2) |
-| D4 | Need-based: only what actually fired | instruction only | — |
-| D5 | Line cap, with merging as the remedy | deterministic fixture | `expression_oracle` (E-3) |
-| D6 | Each limitation appears exactly once | deterministic fixture | `expression_oracle` (E-4) |
+| D3 | No mandatory marker or block syntax | instruction only | — |
+| D4 | Relevance-based: only what could change or qualify the recommendation | instruction only | — |
+| D5 | Brevity follows salience, not a numeric line cap | instruction only | — |
+| D6 | State each material limitation once | instruction only | — |
 
-D2 and D4 carry no mechanical oracle and the table says so rather than
-implying one. Deciding whether a qualifier names a denominator, a unit or a
-pricing set — and whether a disclosure's condition actually fired — requires
-reading what the sentence is about, which is the boundary
+D1–D6 carry no mechanical oracle and the table says so rather than implying
+one. Deciding whether a limitation is material, where it reads most clearly,
+and whether two sentences duplicate the same concern requires reading what the
+answer means, which is the boundary
 `docs/development-guide.md` already draws between a code check and a judge.
-Claiming otherwise would be the structural-gate failure this repository has
-shipped before: a check that proves a prefix is present is not a check that
-proves the right thing sits behind it.
+The retired E-1–E-4 checker proved only block position, prefix, line count, and
+literal duplication. It could not prove relevance or clarity, so Issue #825
+deleted it rather than treating answer formatting as product integrity.
 
-### D1 — one block, after what it qualifies
+### D1 — put a material limitation where it is clearest
 
-Every disclosure an answer owes **collapses into one block, placed after the
-content it qualifies**. Never interleaved with that content, never split across
-two places, never opening the answer.
-
-Which "after" is a layout question the surface owns: on the review card the
-block is the footnote at the end of Block 1 (`output-contract.md` §4), because
-that is where the numbers it qualifies end; on a conversational answer it is
-the end of the answer.
-
-This rule was paid for once already. The 2026-07-22 ruling reversed a
-per-number placement policy after real high-density data fragmented the card's
-indicator list into a wall of one-caveat-per-number interruptions
-([#276](https://github.com/atomchung/fomo-kernel/issues/276)). #823 generalizes
-that ruling product-wide instead of leaving it as one surface's local history.
+A material limitation may stay beside the claim it changes, or several may be
+collected when that reads better. It does not have to open or close the answer,
+and conversational surfaces do not inherit the review card's footnote layout.
+The test is comprehension, not a fixed position.
 
 ### D2 — truth-critical qualifiers stay inline, and only those
 
@@ -110,66 +100,34 @@ properties of the number beside it:
 Those three change what the number *refers to*, so a sentence without them
 states something false rather than something incomplete.
 
-Everything else goes to the block, however serious it is — including staleness
-("that book is 45 days old"), reliability ("that cash balance has no anchor"),
-and absence ("nobody checked liquidity"). Each of those qualifies how much the
-number is *worth*, not what it *is*, and the enumeration is what keeps D2 from
-swallowing D1: an "importance" test would readmit every disclosure to the body
-one at a time, which is exactly how the wall this contract removes was built.
+Other limitations — staleness, reliability, liquidity, valuation, tax, and
+position fit — are not automatically owed. Include one when it could reverse
+the recommendation, materially lower confidence, or prevent the answer from
+implying it was checked.
 
-An inline qualifier is **not repeated** in the tail block (D6). The block is
-where a disclosure goes, not a second copy of everything.
+### D3 — no mandatory marker or block syntax
 
-### D3 — fixed line prefix, from the registry
+Conversational answers need no `[i]` prefix, dedicated tail block, heading, or
+bullet form. Use ordinary prose unless a compact list genuinely improves
+readability. A rendered review card may keep its own footnote layout; that is a
+surface layout decision, not a universal expression rule.
 
-Each line of the block starts with its surface's registered prefix, and that
-prefix marks disclosures and nothing else on that surface. This is what makes
-the block greppable — by a mechanical check, by a QA receipt, and by a reader
-skipping it.
+### D4 — relevance-based
 
-| Surface class | Prefix | Why this one |
-|---|---|---|
-| Review card footnote | `- ` (the footnote's existing bullet) | Already shipped: the card pipeline is a finished precedent and #823's constraint is not to reopen it. Note what is and is not checked — `check_card.py` S-3 asserts the footnote's *position*, never its prefix, so this row records the card's shipped convention rather than a rule under guard. |
-| Every conversational surface — `consider`, freeform answers, no-book framing, weekly market read | `[i] ` | The card's own `[v]`/`[X]`/`[?]`/`[*]` tag vocabulary, extended by one, so the prefix is language-neutral, never occurs in ordinary prose, and reads as a tag rather than as punctuation. |
+A limitation appears because it matters on this call, never as standing
+boilerplate. An available `unchecked` dimension is not, by itself, a reason to
+surface it. When nothing material remains, the answer ends at its judgment.
 
-Adding a surface class means adding a row here. Inventing a prefix inline does
-not make one.
+### D5 — brevity follows salience
 
-### D4 — need-based: only what actually fired
-
-A disclosure appears because its condition is true on this call, never as
-standing boilerplate. A manufactured disclosure is the same defect as a
-manufactured invitation (`decision-framing.md`) and a manufactured concern
-(V9) — all three fill space the evidence did not earn.
-
-The corollary bites in the other direction too: dropping the block entirely
-when nothing fired is correct, not an omission. An answer with no triggered
-limitation ends at its last judgment.
-
-### D5 — a line cap, and merging is the remedy
-
-**At most five lines.** One line per independent limitation, not one per
-payload key: the basis and the price session are one line (they describe the
-same "which book, valued when"); every unchecked dimension is one line
-together; two disclosures qualifying the same number are one line.
-
-When the cap binds, **merge — never drop**. Brevity bounds what an answer
-produces, never which facts it owes (`SKILL.md` rule 8, and the same clause in
-`freeform-answers.md`). A limitation that cannot fit is a signal that two lines
-describe the same thing, not a licence to leave a decision-relevant gap unsaid.
-
-Five is the measured ceiling, not a preference. On a representative
-high-density book — a stale unreconciled basis, a defaulted price session,
-cost-priced weights, an unanchored cash balance, three unclassified holdings,
-five unchecked dimensions — the merged block is four lines. The cap leaves one
-line of headroom above the worst case this repository has measured, and a book
-that needs six is evidence to re-measure rather than to write six.
+There is no line cap. Merge related limits when that clarifies them; keep them
+separate when merging would hide distinct consequences. Brevity is evaluated
+by decision value, not by satisfying a formatter.
 
 ### D6 — each limitation appears exactly once
 
-Across the whole answer: not inline *and* in the block, not twice in the block
-under two wordings, not restated in a closing sentence. This is V6's "state each
-material limitation once", with the placement half now owned here.
+Across the whole answer, state a material limitation once. This is a semantic
+instruction, not a literal-string deduplication gate.
 
 ## 4. Citation and provenance (C1–C4)
 
@@ -242,19 +200,16 @@ them may restate, narrow, or contradict V/D/C.
 
 | Check | What it observes — and what it does not | Where |
 |---|---|---|
-| `check_card.py` S-3 | **D1 on the review card, by position only**: no consecutive caveat paragraphs, none before Block 1, none inside Block 1. It does not read the footnote's prefix, and it has no opinion on D2. | `tests/agent/check_card.py` |
-| `check_expression.py` E-1…E-5 | D1 (E-1), D3 (E-2), D5 (E-3), D6 (E-4) and C4 (E-5) on a conversational answer, against synthetic witnesses. E-4 folds case and punctuation only, so two lines stating one limitation in genuinely different words survive it. | `tests/agent/check_expression.py` |
+| `check_card.py` S-3 | Review-card layout only: no consecutive caveat paragraphs, none before Block 1, none inside Block 1. It does not govern conversational placement. | `tests/agent/check_card.py` |
+| `check_expression.py` E-5 | C4 only: no engine payload token reaches a conversational answer. E-1–E-4 were retired by #825 because formatting is not evidence of relevance or clarity. | `tests/agent/check_expression.py` |
 | `check_voice.py` | V1–V9 witness classification. | `tests/agent/check_voice.py` |
 | `answer_provenance` | C1/C2/C4 on a structured `--agent-case`, and the coverage a case may not leave uncited — including the extent of an illegible book, not only that it is one. | `skills/fomo-kernel/engine/answer_provenance.py` |
-| `test_expression_contract.py` | That both registries here are complete and survive a removal mutation, that every surface document routes here, that the prefix and cap this file states are the ones the checker enforces, and that **the one clause #823 reversed** ("never grouped into a disclosure block") appears nowhere as an instruction. That last check is specific, not general: no test can decide whether a surface has invented some *new* placement rule of its own. | `tests/test_expression_contract.py` |
+| `test_expression_contract.py` | That both registries are complete, every surface routes here, D1–D6 honestly declare instruction-only verification, and the C4 blacklist remains schema-derived. | `tests/test_expression_contract.py` |
 
-**None of these runs against a live answer.** `check_expression.py` is a
-fixture oracle: it proves each rule is decidable and that a witness violating
-it is caught, exactly the way `check_voice.py` does for V1–V9. Nothing sits
-between the model and the user, and adding a runtime gate is not what #823
-asked for. So what this contract buys is that the rules are one set, stated
-once, mechanically decidable, and no longer able to contradict each other —
-not that an answer obeyed them.
+**None of these runs against a live answer.** `check_expression.py` proves only
+the exact C4 property it can decide. D1–D6 are evaluated by reading the answer
+in context; pretending a regex covered them was the constraint failure #825
+removed. Nothing sits between the model and the user.
 
 The delivery half is observed the same way every other instruction-tier rule
 in this repository is: by owner-live dogfood and by the QA receipt
@@ -269,3 +224,4 @@ letting a green suite read as a governed output.
 | 2026-07-22 | Card disclosures collapse into one footnote, reversing per-number placement, after real high-density data produced a wall of per-number interruptions ([#276](https://github.com/atomchung/fomo-kernel/issues/276)). Scope: the review card. |
 | 2026-08-14 | Owner ruling ([#823](https://github.com/atomchung/fomo-kernel/issues/823)): expression is abstracted out of every output surface and held across all of them. The 2026-07-22 placement ruling generalizes product-wide as D1; `decision-framing.md`'s contradicting per-claim rule is unified into D1/D2 rather than kept as a scope exception, because the rule it stated ("attached to the claim it qualifies, never grouped into a disclosure block") was written about *which limitations deserve saying at all*, and its placement clause was never the ruling anyone made. Provenance labelling is stated as the default (C1) with `--agent-case` demoted to its mechanical projection. |
 | 2026-08-14 | Line cap set at five (D5) from a measured four-line worst case, with merging — never dropping — as the remedy, so a cap can never become an argument for omitting an owed fact. |
+| 2026-08-19 | Issue #825 retires the product-wide block, prefix, and line-cap template plus E-1–E-4. Those checks proved formatting, not whether a limitation mattered. The review card keeps its footnote as local layout; conversational surfaces use relevance-driven placement. |

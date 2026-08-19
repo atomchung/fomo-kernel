@@ -147,7 +147,8 @@ NO_BOOK_FRAMING_REQUIRED_PHRASES = (
 # #598 follow-up (owner ruling 2026-07-30): the closing invitation inside
 # decision-framing.md's own "Earning the next piece of evidence" section is a
 # small closed set of five evidence-buyable questions plus two rules -- which
-# one (salience) and where it goes (placement) -- never a per-branch table.
+# one (salience) and whether it naturally branches the recommendation -- never
+# a per-branch table or a fixed placement template.
 # Scoped to the contract file alone, unlike NO_BOOK_FRAMING_SECTIONS above:
 # this mechanism is prose detail that lives entirely in the soft-routed
 # reference, and neither guaranteed-delivery entry point restates it.
@@ -160,12 +161,9 @@ EVIDENCE_INVITATION_REQUIRED_PHRASES = (
     # presence check is what is available for prose; there is no schema or
     # validator over a host's freeform answer text.
     "At most one per answer, chosen by salience",
-    # The placement rule the selection rule alone cannot express: one
-    # invitation, appended once the answer is complete, never interleaved
-    # with the case for and against. Dropping this leaves an invitation free
-    # to read as a precondition on the sentence it interrupts -- the
-    # withheld-as-leverage failure the same paragraph forbids.
-    "one invitation per answer, and it goes last",
+    # Placement follows the branch it creates rather than a fixed tail slot.
+    # The answer still cannot be withheld until the data arrives.
+    "at the point where its answer naturally branches the recommendation",
     # The fifth item's exclusivity: a holdings view cannot buy it, only
     # transaction history can. A careless edit widening this to "a holdings
     # view also buys it" would send a host after evidence the route never
@@ -1098,8 +1096,8 @@ def test_no_book_framing_mutations_are_caught():
 def test_evidence_invitation_mechanism_is_stated_in_the_contract():
     """#598 follow-up: decision-framing.md's closing invitation names the
     question a piece of evidence would answer, drawn from a small closed set
-    of five, with a salience rule choosing which one and a placement rule
-    saying it is appended once, last. Section-scoped to the contract's own
+    of five, with a salience rule choosing which one and a relevance rule
+    placing it where the recommendation actually branches. Section-scoped to the contract's own
     "Earning the next piece of evidence" heading -- unlike
     NO_BOOK_FRAMING_SECTIONS this mechanism is not restated in either
     guaranteed-delivery entry point, so there is nothing to check there.

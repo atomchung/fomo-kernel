@@ -146,6 +146,18 @@ def _legacy_case():
     }
 
 
+def _positive_case():
+    legacy = _valid_case()
+    return {
+        "recommendation": {
+            "claim": "Do not add at this size.",
+            "provenance": "agent_judgment",
+        },
+        "support": legacy["against"],
+        "counter_case": legacy["for"],
+    }
+
+
 def _validate(case, basis=None, consequence=None, rule_collisions=None, user_statements=()):
     return answer_provenance.validate_agent_case(
         case,
@@ -502,6 +514,19 @@ def test_a_well_formed_agent_case_is_accepted():
         _validate(_valid_case())
     except answer_provenance.AnswerProvenanceError as exc:
         raise AssertionError(f"a well-formed agent_case must be accepted, got: {exc}") from exc
+
+
+def test_a_positive_recommendation_case_is_accepted():
+    try:
+        _validate(_positive_case())
+    except answer_provenance.AnswerProvenanceError as exc:
+        raise AssertionError(f"a positive agent_case must be accepted, got: {exc}") from exc
+
+
+def test_a_positive_recommendation_cannot_impersonate_an_engine_fact():
+    case = _positive_case()
+    case["recommendation"] = _max_pct_claim()
+    _rejects("recommendation must be labelled agent_judgment", case)
 
 
 def test_a_context_free_case_with_no_open_disclosures_or_staleness_needs_no_basis_or_disclosure_claim():
