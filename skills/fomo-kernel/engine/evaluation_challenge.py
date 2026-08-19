@@ -190,11 +190,11 @@ UNCHECKED_WITH_CONTEXT = ("evidence_delta",)
 # cited (references/trade-consequence.md, "What the user said").
 UNCHECKED_WITH_EVIDENCE = ("evidence_refs_unverified",)
 
-# The floor the two-sided case must clear, restated here so the block is
-# self-contained for a reader who has only this payload. The enforcement of
-# it lives in answer_provenance.validate_agent_case, which refuses an empty
-# side; this is the same number said where the agent is reading.
-CASE_REQUIRED = {"for": 1, "against": 1}
+# The positive case floor, restated here so a reader holding only the emitted
+# payload knows what the provenance gate will accept. A counter-case is a
+# relevance judgment, not a quota: include it when it could change the action.
+CASE_REQUIRED = {"recommendation": 1, "support": 1,
+                 "counter_case": "when_material"}
 
 # A collision that needs saying, keyed on the *transaction effect* rather
 # than on the book's absolute state (#579). `compliant` is the only effect
@@ -650,7 +650,7 @@ def build_challenge(*, premise, basis, consequence, rule_collisions=(), context=
     ``unchecked``
         What the engine did not look at, this call.
     ``case_required``
-        The floor for a two-sided case.
+        The floor for a positive recommendation case.
     ``required_coverage``
         The mechanically enforced subset: what a ``--agent-case`` submission
         is refused for leaving out. Imported from ``answer_provenance`` so

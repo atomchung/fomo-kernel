@@ -160,11 +160,12 @@
     "case_required": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["for", "against"],
-      "description": "The floor a two-sided --agent-case submission must clear, restated here so this block is self-contained for a reader holding only this payload -- the same number said where the agent is reading, mirroring evaluation_challenge.CASE_REQUIRED. This block only names the floor; the refusal of a submission that does not clear it is enforced by answer_provenance.validate_agent_case (which rejects a present-but-empty side) and by answer-provenance.schema.json's own minItems:1 on `for`/`against`, not by this schema. Currently one claim minimum on each side.",
+      "required": ["recommendation", "support", "counter_case"],
+      "description": "The preferred positive --agent-case contract. It requires a recommendation and supporting claim, while counter_case is included only when it could materially change the action. The legacy for/against envelope remains readable for stored-history compatibility but is not advertised here.",
       "properties": {
-        "for": {"type": "integer", "minimum": 1, "description": "Minimum number of claims the case FOR the trade must carry."},
-        "against": {"type": "integer", "minimum": 1, "description": "Minimum number of claims the case AGAINST the trade must carry."}
+        "recommendation": {"const": 1, "description": "Exactly one explicit action judgment."},
+        "support": {"type": "integer", "minimum": 1, "description": "Minimum number of supporting claims."},
+        "counter_case": {"const": "when_material", "description": "A counter-case is required by relevance, not symmetry."}
       }
     },
     "required_coverage": {

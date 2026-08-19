@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Offline contract checks for #823's unified expression contract.
+"""Offline contract checks for the unified expression contract.
 
 `docs/expression-contract.md` claims three things this file is the oracle for:
 that its registries are complete and stable, that every output surface routes
-to it instead of carrying its own expression rules, and that the numbers it
-states (the disclosure prefix, the line cap) are the same numbers the checker
-enforces. A contract nobody loads is text, and a contract whose constants
-drift from its checker is worse than none — it reads as governed.
+to it instead of carrying its own expression rules, and that its remaining
+deterministic C4 checker derives engine vocabulary from the schemas. Placement,
+markers, and line count are deliberately not mechanical gates after #825.
 
 The fourth section is about the obligation *floor* rather than the contract
 document: `evaluation_challenge.must_state` must stay a short list of distinct
@@ -54,43 +53,6 @@ DISCLOSURE_IDS = tuple(f"D{number}" for number in range(1, 7))
 CITATION_IDS = tuple(f"C{number}" for number in range(1, 5))
 ROW_RE = re.compile(r"^\|\s*([DC]\d+)\s*\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|$", re.M)
 
-# The reversed wording, in every form it was actually written in. It may still
-# appear in prose that records the reversal; it may not appear as an
-# instruction.
-#
-# This started as one string and that was not enough. The first cut of #823
-# swept for `decision-framing.md`'s phrasing alone and shipped with `SKILL.md`
-# rule 3 still reading "beside the claim it qualifies" — on the *first*
-# instruction layer, loaded on every single turn, while the new rule sat two
-# files deeper. A surface-bound sweep for a surface-bound defect: the same
-# shape as the defect it was sweeping for.
-REVERSED_CLAUSES = (
-    "never grouped into a disclosure block",
-    "beside the claim it qualifies",
-    "attached to the claim it qualifies",
-    "attached to what they qualify",
-)
-REVERSAL_RECORDS = {
-    CONTRACT,
-    ROOT / "docs" / "output-voice.md",
-    ROOT / "docs" / "output-contract.md",
-    REFERENCES / "decision-framing.md",
-}
-
-# Where the sweep runs. Not just the surface documents: the always-on
-# instruction layers are the ones a stale rule does the most damage from, and
-# the agent-facing QA scene files are read as acceptance criteria.
-#
-# The host adapters are deliberately outside it. `AGENTS.md` is in — it is the
-# shared floor every client receives — but a host adapter may carry tool
-# mechanics only, and `tests/test_doc_language.py` already fails the suite if a
-# shared rule appears in one. A second sweep over them would be this file
-# asserting a boundary that file owns.
-SWEEP_GLOBS = ("docs/*.md", "skills/fomo-kernel/*.md",
-               "skills/fomo-kernel/references/*.md", "skills/fomo-kernel/flows/*.md",
-               "tests/agent/*.md", "AGENTS.md")
-
-
 def _load_checker():
     if "check_expression" in sys.modules:
         return sys.modules["check_expression"]
@@ -136,13 +98,13 @@ def test_registry_mutations_are_caught():
     assert len(ids) != len(set(ids)), "duplicate mutation did not create a duplicate"
 
 
-def test_an_unverified_rule_is_declared_unverified():
-    """D2 and D4 have no mechanical oracle, and the contract says so in the
+def test_unverified_rules_are_declared_unverified():
+    """D1-D6 and C3 have no mechanical oracle, and the contract says so in the
     table rather than naming one it does not have. A gate that claims
     coverage it lacks is the structural-gate failure this repository has
     shipped before."""
     rows = {row[0]: (row[2], row[3]) for row in _rows(CONTRACT.read_text(encoding="utf-8"))}
-    for rule_id in ("D2", "D4", "C3"):
+    for rule_id in DISCLOSURE_IDS + ("C3",):
         verification, oracle = rows[rule_id]
         assert verification == "instruction only", f"{rule_id} claims {verification!r}"
         assert oracle == "—", f"{rule_id} names oracle {oracle!r} for an unverified rule"
@@ -157,40 +119,16 @@ def test_every_surface_routes_to_the_contract():
             f"{path.relative_to(ROOT)} ({surface}) does not route to the expression contract")
 
 
-def test_no_instruction_surface_still_teaches_the_reversed_placement():
-    """Every phrasing of the reversed rule, across every instruction layer.
-
-    The files in `REVERSAL_RECORDS` keep it inside prose that records the
-    reversal — a ruling log, a block quote, a superseded-clause note. Anywhere
-    else it is the contradiction returning, and the layer it returns on
-    matters most where it is loaded most."""
-    swept = 0
-    for pattern in SWEEP_GLOBS:
-        for path in sorted(ROOT.glob(pattern)):
-            swept += 1
-            text = path.read_text(encoding="utf-8")
-            for clause in REVERSED_CLAUSES:
-                if clause in text:
-                    assert path in REVERSAL_RECORDS, (
-                        f"{path.relative_to(ROOT)} teaches {clause!r}, "
-                        "the placement rule #823 reversed")
-    assert swept > 30, f"the sweep reached only {swept} files; a glob stopped matching"
-
-
-def test_the_always_on_layer_states_the_current_placement_rule():
-    """`SKILL.md` is loaded on every turn and the expression contract is two
-    files deeper, so the one-line version has to be right *here* or the rule
-    reaches nobody. The first cut of #823 left this line reading "beside the
-    claim it qualifies" — the exact wording it had just reversed — which is
-    how a contract can be internally perfect and still ship the old
-    behaviour."""
+def test_the_always_on_layer_states_relevance_without_a_template():
+    """The always-on instruction keeps the semantic floor but does not impose
+    the formatting rules #825 retired."""
     text = (ROOT / "skills" / "fomo-kernel" / "SKILL.md").read_text(encoding="utf-8")
-    checker = _load_checker()
-    assert "tail block" in text, "SKILL.md does not state where a limitation goes"
-    assert f"`{checker.PREFIX}`" in text, "SKILL.md does not state the disclosure prefix"
+    assert "material limitations" in text
     assert "denominator, unit, or pricing set" in text, (
-        "SKILL.md states the tail rule without D2's enumeration, so the one "
-        "case that legitimately stays inline has nowhere to be read from")
+        "SKILL.md omits D2's truth-critical qualifier enumeration")
+    assert "tail block" not in text
+    assert "`[i] `" not in text
+    assert "at most five lines" not in text.lower()
 
 
 def test_the_contract_routes_voice_rather_than_restating_it():
@@ -203,22 +141,7 @@ def test_the_contract_routes_voice_rather_than_restating_it():
     assert not voice_rows, f"the contract restates {len(voice_rows)} voice rows instead of routing"
 
 
-# ───────────────────── 3. the document and its checker agree ─────────────────────
-
-def test_the_prefix_and_the_cap_are_declared_once():
-    """Two constants, two places they could disagree. The contract is what a
-    person reads and the checker is what fails a build; a drift between them
-    is a rule that is enforced at a value nobody documented."""
-    checker = _load_checker()
-    text = CONTRACT.read_text(encoding="utf-8")
-    assert f"`{checker.PREFIX}`" in text, (
-        f"the contract's D3 registry does not declare the checker's prefix {checker.PREFIX!r}")
-    assert re.search(rf"\*\*At most {_english(checker.LINE_CAP)} lines\.\*\*", text), (
-        f"the contract's D5 does not state the checker's cap of {checker.LINE_CAP}")
-
-
-def _english(number):
-    return {3: "three", 4: "four", 5: "five", 6: "six"}[number]
+# ───────────────────── 3. the remaining checker agrees ─────────────────────
 
 
 def test_the_witness_oracle_passes():
@@ -339,12 +262,10 @@ def main():
     tests = [
         test_both_registries_are_complete_and_ordered,
         test_registry_mutations_are_caught,
-        test_an_unverified_rule_is_declared_unverified,
+        test_unverified_rules_are_declared_unverified,
         test_every_surface_routes_to_the_contract,
-        test_no_instruction_surface_still_teaches_the_reversed_placement,
-        test_the_always_on_layer_states_the_current_placement_rule,
+        test_the_always_on_layer_states_relevance_without_a_template,
         test_the_contract_routes_voice_rather_than_restating_it,
-        test_the_prefix_and_the_cap_are_declared_once,
         test_the_witness_oracle_passes,
         test_the_checker_derives_its_blacklist_from_the_schemas,
         test_fixed_topics_stay_within_their_declared_ceiling,

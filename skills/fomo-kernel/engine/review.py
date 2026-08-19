@@ -7070,11 +7070,10 @@ def _load_json_arg(value, label):
 def _validate_agent_case(payload):
     """Fail-closed structural precheck for ``--agent-case``: cheap shape
     only, run before any book is read or any number is computed (right
-    after the flag is loaded in ``cmd_consider``). Both ``for`` and
-    ``against`` are required once ``agent_case`` is sent at all: owner
-    ruling 2026-07-27, the agent lists the case for and against and does
-    not take a position, so a one-sided submission is refused rather than
-    accepted.
+    after the flag is loaded in ``cmd_consider``). The preferred contract
+    states one recommendation, its support, and a counter-case only when
+    material. The legacy for/against envelope stays readable so recorded
+    evaluations remain replayable.
 
     This does not enforce the exact field set a claim may carry — that set
     is provenance-dependent (``anchor``/``worsens`` for ``engine_fact``,
@@ -7088,28 +7087,25 @@ def _validate_agent_case(payload):
     engine_fact/public_fact claim carrying the field its own provenance
     requires before it could ever reach that check, making both provenance
     kinds unusable (#479 Wave B)."""
-    if not isinstance(payload, dict):
-        raise ReviewError("--agent-case must be a JSON object")
-    unknown = set(payload) - {"for", "against"}
-    if unknown:
-        raise ReviewError("--agent-case has unknown fields: " + ", ".join(sorted(unknown)))
-    for side in ("for", "against"):
-        if side not in payload:
-            raise ReviewError(f"--agent-case must carry both 'for' and 'against' (missing {side!r})")
-        claims = payload[side]
-        if not isinstance(claims, list):
-            raise ReviewError(f"--agent-case.{side} must be a list")
-        for index, claim in enumerate(claims):
-            if not isinstance(claim, dict) or not {"claim", "provenance"} <= set(claim):
-                raise ReviewError(
-                    f"--agent-case.{side}[{index}] must be an object carrying at least "
-                    "'claim' and 'provenance'")
-            if not isinstance(claim["claim"], str) or not claim["claim"].strip():
-                raise ReviewError(f"--agent-case.{side}[{index}].claim must be a non-empty string")
-            if claim["provenance"] not in AGENT_CASE_PROVENANCE:
-                raise ReviewError(
-                    f"--agent-case.{side}[{index}].provenance must be one of "
-                    + ", ".join(AGENT_CASE_PROVENANCE))
+    try:
+        claims = answer_provenance.agent_case_claims(payload)
+    except answer_provenance.AnswerProvenanceError as exc:
+        raise ReviewError(str(exc).replace("agent_case", "--agent-case", 1)) from exc
+    for section, index, claim in claims:
+        label = ("--agent-case.recommendation" if section == "recommendation"
+                 else f"--agent-case.{section}[{index}]")
+        if not isinstance(claim, dict) or not {"claim", "provenance"} <= set(claim):
+            raise ReviewError(
+                f"{label} must be an object carrying at least 'claim' and 'provenance'")
+        if not isinstance(claim.get("claim"), str) or not claim["claim"].strip():
+            raise ReviewError(f"{label}.claim must be a non-empty string")
+        if claim.get("provenance") not in AGENT_CASE_PROVENANCE:
+            raise ReviewError(
+                f"{label}.provenance must be one of " + ", ".join(AGENT_CASE_PROVENANCE))
+    if ("recommendation" in payload
+            and payload["recommendation"].get("provenance") != "agent_judgment"):
+        raise ReviewError(
+            "--agent-case.recommendation must be labelled agent_judgment")
 
 
 def _validate_decision_context(payload):
@@ -7735,6 +7731,7 @@ def cmd_consider(args):
     (AGENTS.md, SKILL.md, references/agent-boundaries.md):
 
       --premise <path-or-inline-JSON>    compute and record a new evaluation
+      --premise ... --ephemeral          compute without recording an evaluation
       --resolve <evaluation_id> --decision {acted,declined,modified}
                                           record what the user did with one
 
@@ -7766,8 +7763,9 @@ def cmd_consider(args):
     with a different why-now is a distinct evaluation rather than a silent
     supersede; it never joins a computation.
 
-    ``--agent-case`` (schemas/answer-provenance.schema.json) is optionally a
-    structured case for and against, checked against this call's own frozen
+    ``--agent-case`` (schemas/answer-provenance.schema.json) optionally states
+    a recommendation, its support, and any material counter-case, checked
+    against this call's own frozen
     ``basis``/``consequence``/``rule_collisions`` by
     ``answer_provenance.validate_agent_case`` before the row is written or
     anything is returned (#414, wired in here by #479 Wave B). A claim that
@@ -7790,6 +7788,7 @@ def cmd_consider(args):
             ("--instrument-map", args.instrument_map), ("--cash", args.cash),
             ("--agent-case", args.agent_case),
             ("--decision-context", args.decision_context),
+            ("--ephemeral", args.ephemeral),
         ) if value]
         if conflicting:
             raise ReviewError("--resolve takes no premise; remove " + ", ".join(conflicting))
@@ -7801,6 +7800,10 @@ def cmd_consider(args):
         raise ReviewError("--decision only applies together with --resolve")
     if not args.premise:
         raise ReviewError("consider requires --premise, or --resolve together with --decision")
+    if args.ephemeral and args.paths:
+        raise ReviewError(
+            "--ephemeral evaluates the existing recorded book only; omit CSV paths. "
+            "Use a persistent consider call when an input file must establish the book")
 
     premise_payload = _load_json_arg(args.premise, "--premise")
     # #479 Wave A. Validated here, before any book is read or any number is
@@ -8131,7 +8134,11 @@ def cmd_consider(args):
     # #810: `row` is rebound to what the record says, so a retry of an
     # evaluation the user already settled answers with that settlement rather
     # than presenting it back to them as still open.
-    row, report = _append_evaluation_row(root, row)
+    if args.ephemeral:
+        report = {"path": _evaluation_path(root), "appended": 0,
+                  "status": "ephemeral"}
+    else:
+        row, report = _append_evaluation_row(root, row)
     payload = {"status": "considered", "root": root, "language": language,
                "evaluation": row, "challenge": challenge, "append": report}
     if prior_decision is not None:
@@ -8868,6 +8875,11 @@ def build_parser():
                                "premise")
     consider.add_argument("--decision", choices=CONSIDER_DECISIONS,
                           help="required together with --resolve")
+    consider.add_argument(
+        "--ephemeral", action="store_true",
+        help="compute against the existing recorded book without appending to "
+             "trade_evaluations.jsonl; use for bounded candidate fan-out, then rerun the "
+             "selected candidate without this flag")
     consider.add_argument("--prices",
                           help="agent-supplied price envelope (references/price-feed.md)")
     consider.add_argument("--prices-unavailable", dest="prices_unavailable",
@@ -8883,8 +8895,8 @@ def build_parser():
                                         "Omitting this falls back to the last finalized "
                                         "review's own anchored balance, if it had one (#756)")
     consider.add_argument("--agent-case",
-                          help="optional path to a JSON file: the structured case for and "
-                               "against, {for: [...], against: [...]} "
+                          help="optional path to a JSON file: recommendation, non-empty "
+                               "support, and an optional material counter_case "
                                "(references/trade-consequence.md)")
     consider.add_argument("--decision-context",
                           help="optional: what the user said at the moment of deciding, as a "

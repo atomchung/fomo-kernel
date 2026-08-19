@@ -7,7 +7,7 @@
 
 **English** · [繁體中文](README.zh-TW.md) · [简体中文](README.zh-CN.md)
 
-> **A direct, evidence-bound trading decision partner that runs locally.** Bring the trade you are considering or the trades you already made. FOMO Kernel reduces your decision burden without making the decision for you.
+> **A direct, evidence-bound trading decision partner that runs locally.** Bring the decision you face or the trades you already made. FOMO Kernel can recommend and rank bounded candidates while keeping portfolio facts and execution state honest.
 
 You use it through an AI coding agent such as Claude Code, and it works from the holdings and transactions you give it. Your data stays on your machine.
 
@@ -16,14 +16,14 @@ It is built for two moments:
 - **Before a trade:** see what the trade does to your recorded portfolio, then challenge the reason for doing it now.
 - **After trades:** review what your behavior says, then choose one rule worth checking next time.
 
-Numbers, rankings, portfolio effects, and state transitions come from a deterministic Python engine. The agent handles the bounded work code cannot settle: your motive, the strongest counter-case, and a direct explanation of what matters.
+Numbers, portfolio effects, and state transitions come from a deterministic Python engine. The agent handles what code cannot settle: research, recommendation, ranking, your motive, and the counter-case when it could change the action.
 
 ## Start from the moment you are in
 
 | Your moment | Minimum input | First useful outcome |
 |---|---|---|
-| **“Should I buy, add, trim, or wait?”** | The contemplated action, your current reason, and what changed now | With a recorded portfolio: exact post-trade weight, hidden overlap/concentration, cash effect, rule collisions, the key trade-off, and the strongest counter-case. |
-| **Same decision, but no portfolio recorded yet** | Your decision, reason, and why now | A bounded decision framing instead of a refusal: strongest case, strongest counter-case, the question the decision turns on, and a clear statement of what was not checked. No invented portfolio numbers and nothing is persisted. |
+| **“Should I buy, add, trim, wait, or choose another candidate?”** | The contemplated action or bounded candidates, your current reason, and what changed now | With a recorded portfolio: an explicit recommendation backed by exact post-trade weight, hidden overlap/concentration, cash effect, rule collisions, and relevant evidence. |
+| **Same decision, but no portfolio recorded yet** | Your decision, reason, and why now | A bounded recommendation instead of a refusal: its support, any material counter-case, the question the decision turns on, and a clear statement of what was not checked. No invented portfolio numbers and nothing is persisted. |
 | **“Review my recent trades.”** | A broker CSV or transaction export | One focused behavior-review card: what you did right, your largest supported leak, the motive question that changes the read, and at most one rule you choose. |
 | **“I only have a holdings screenshot.”** | A position table or statement screenshot | An opening structural check: weights, single-position risk, driver concentration, ETF structure, and data-integrity limits. It does not invent transaction history. |
 | **“Show me the experience first.”** | No personal data | An isolated test drive using fictional data. It never writes to your real coach memory. |
@@ -50,13 +50,13 @@ The questions therefore focus on why now, what changed, what would prove the the
 
 ### 4. You see the useful result before making another commitment
 
-A pre-trade answer leads with the decision-relevant tension and strongest rebuttal, not with tool narration or a wall of caveats.
+A pre-trade answer leads with what to do and why. It adds a rebuttal or caveat only when material, not as mandatory symmetry.
 
 A review shows the complete card in the conversation before asking you to choose a rule. A generated file is not treated as delivery; the result has to reach you.
 
-### 5. You keep the final action
+### 5. Recommendation is explicit; execution state stays honest
 
-For a contemplated trade weighed against a recorded portfolio, FOMO Kernel can record what was considered, but never calls it executed. It does not issue a price target or decide which ticker to buy or sell.
+For a contemplated trade weighed against a recorded portfolio, FOMO Kernel can recommend or rank user-named and recorded-book candidates. It never calls a consideration executed, and it does not issue a price target or market forecast.
 
 For a review, you may choose one proposed rule, write your own, or skip. The product does not manufacture a commitment merely to complete the flow.
 

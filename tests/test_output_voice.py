@@ -36,7 +36,8 @@ def test_global_authority_and_route_boundaries():
     assert "every user-visible FOMO Kernel surface" in text
     assert "Route references retain ownership of route-specific facts" in text
     assert "Phase 1 integrates and proves this authority only on `consider` and no-book" in text
-    assert "do not select,\n  rank, or call one candidate stronger" in text
+    assert "Select or rank bounded\n  candidates" in text
+    assert "never report a recommendation or\n  consideration as broker execution" in text
 
 
 def test_actual_instruction_paths_load_the_authority():

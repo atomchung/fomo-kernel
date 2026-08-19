@@ -4,11 +4,13 @@
 
 Every fact retrieved under this contract enters the answer as a `public_fact` with `source` and `as_of` ([trade-consequence.md](trade-consequence.md) documents the claim envelope). A lookup result never becomes the user's motive by itself — see [What a found fact may become](#what-a-found-fact-may-become).
 
-## Three tiers
+## Relevance gates
 
-### L0 — position context, standing on every `consider` call
+### Price and position context — when material
 
-Before answering, fetch the small position packet for the premise ticker:
+Fetch a small position packet only when the question or recommendation depends
+on where the security trades now — for example, “am I chasing?”, an unstated
+premise price, or a comparison whose result could change with current value:
 
 - the current price, beside the premise price;
 - the source's own recent-move readings — the day move, and whatever week, month, or 52-week change figures the source itself publishes;
@@ -16,7 +18,11 @@ Before answering, fetch the small position packet for the premise ticker:
 
 Transcribe the source's ready-made readings; do not derive new ones. Stating both prices and saying in words which side of the range the trade sits on is judgment and belongs in the answer; computing a new percentage is not transcription. Use a recognized market-data source — the same standard as [price-feed.md](price-feed.md); yfinance's ready-made fields are the default when the host can run it.
 
-L0 is standing input because this route's own headline questions are position-in-time questions. It is fetched even when the user's question is pure book arithmetic — but like every other fact, it appears in the visible answer only where it earns a place. It is not a search: no L0 reading triggers further lookup by itself. If the host cannot reach a price source, say so — "current price unavailable, reading on cost basis" — and answer from the book; the deterministic answer is never blocked.
+Do not fetch this packet for pure book arithmetic or when the engine already
+resolved the prices the answer needs. A price reading never triggers more
+research by itself. If a material price source is unreachable, state that gap
+and answer only to the extent the recorded book supports; never turn an
+unpriced basis into a current-market claim.
 
 ### L1 — event lookup, on trigger
 
@@ -41,9 +47,9 @@ Open broad, then narrow: the first query is short and wide ("<ticker> news this 
 
 `unchecked` names what the engine did not look at. When the user's own reason makes one of those dimensions decision-central — "it got cheap" (valuation), "the business improved" (operating evidence), "rates changed" (an official release) — that dimension stops being a disclaimer and becomes the one thing to verify: look up the specific metric or release the user means, or ask which one they mean. The lookup is bounded to the named dimension.
 
-## When an event or dimension lookup does not happen
+## When lookup does not happen
 
-L0 stands on its own; L1 and L2 are skipped when:
+All lookup is skipped when:
 
 - the question is fully answered by the recorded book ("what does adding this do to my weights?");
 - the stated reason is clear and stable, and no current fact is needed to understand the decision;
@@ -51,7 +57,9 @@ L0 stands on its own; L1 and L2 are skipped when:
 - the packet is already answered — do not keep searching past it;
 - the user asked not to browse, or the host has no browse capability: state the gap and ask for the source or the reason instead. Never invent, and never read "nothing found" as "no risk".
 
-Generic company research, news recaps, sentiment collection, market-wide discovery, price targets and forecasts are out of scope on this route regardless of trigger.
+Company research is in scope when a named operating, valuation, or event fact
+could change the recommendation. News recaps, sentiment collection,
+market-wide discovery, price targets, and forecasts remain out of scope.
 
 ## The neutral query
 
@@ -93,4 +101,8 @@ A company announcing guidance today does not prove the user is acting because of
 
 The wording is illustrative, not a template. If nothing material was found, say so and ask for the real trigger.
 
-Retrieved context is material for judgment, not script. It enters the visible answer only where it earns a place in the lead, the counter-case, or a necessary question — the same salience selection engine facts pass through. A lookup that ends as a pasted news summary has replaced a disclaimer dump with a news dump, and both fail the same way.
+Retrieved context is material for judgment, not script. It enters the visible
+answer only where it earns a place in the recommendation, its support, a
+material counter-case, or a necessary question. A lookup that ends as a pasted
+news summary has replaced a disclaimer dump with a news dump, and both fail the
+same way.

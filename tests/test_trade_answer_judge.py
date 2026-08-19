@@ -848,6 +848,48 @@ def test_candidate_accepts_the_display_magnitude_of_a_negative_engine_delta():
     assert eligibility.eligible, eligibility.reason
 
 
+def test_positive_recommendation_candidate_is_eligible_without_resolution_tail():
+    judge = load_module()
+    bank = loaded_bank(judge)
+    fixture = bank[0]
+    payload = candidate_payload(judge, fixture)
+    legacy = payload["agent_case"]
+    support = legacy["against"] + [legacy["for"][1]]
+    payload["agent_case"] = {
+        "recommendation": legacy["for"][0],
+        "support": support,
+    }
+    for segment in payload["segments"]:
+        if segment["kind"] != "claim_ref":
+            continue
+        if segment["side"] == "against":
+            segment["side"] = "support"
+        elif segment["index"] == 0:
+            segment["side"] = "recommendation"
+        else:
+            segment["side"] = "support"
+            segment["index"] = len(legacy["against"])
+
+    resolution_index = next(
+        index for index, segment in enumerate(payload["segments"])
+        if segment["kind"] == "resolution")
+    separator = payload["segments"][resolution_index - 1]
+    assert separator["kind"] == "separator"
+    payload["presented_text"] = payload["presented_text"][:separator["start"]]
+    payload["segments"] = payload["segments"][:resolution_index - 1]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = pathlib.Path(tmp) / "candidate.json"
+        write_candidate(path, payload)
+        candidate, _loaded, problems = judge.load_candidate(path, bank)
+    assert not problems, problems
+    eligibility = judge.deterministic_eligibility(candidate, candidate["answers"][0])
+    assert eligibility.eligible, eligibility.reason
+    segmented = eligibility.delivery_fidelity["segmented_presentation"]
+    assert segmented["resolution_count"] == 0
+    assert segmented["claim_count"] == 5
+
+
 def test_candidate_cannot_append_an_unlabelled_claim_beside_a_valid_case():
     judge = load_module()
     bank = loaded_bank(judge)

@@ -220,7 +220,8 @@ SYNTHETIC_CHALLENGE = {
         {"field": "why_now", "text": "The synthetic supplier raised guidance this morning."},
     ],
     "unchecked": ["liquidity", "valuation", "tax", "position_fit", "evidence_delta"],
-    "case_required": {"for": 1, "against": 1},
+    "case_required": {
+        "recommendation": 1, "support": 1, "counter_case": "when_material"},
     "required_coverage": [
         {"path": "consequence.disclosures.0", "owes": "disclosure", "key": "cost_basis"},
     ],
@@ -1507,13 +1508,15 @@ def test_a_consider_may_not_borrow_the_change_surface():
     assert_has(ux_receipt.verify_rows(rows), "change_presented does not belong on this route")
 
 
-def test_a_consider_without_its_presentation_pair_fails():
-    """A declaration and a verdict prove nothing about the answer's delivery."""
+def test_a_consider_requires_its_evaluation_but_not_a_resolution_invitation():
+    """The delivered evaluation is proof; a follow-up invitation is contextual."""
     rows = drop(consider_rows(), EVALUATION)
     assert_has(ux_receipt.verify_rows(rows), "must record exactly one evaluation_presented")
 
     rows = drop(consider_rows(), RESOLUTION)
-    assert_has(ux_receipt.verify_rows(rows), "must record exactly one resolution_presented")
+    at(rows, VERDICT)["resolution"] = "not_applicable"
+    assert ux_receipt.verify_rows(rows) == []
+    assert ux_receipt.verify_rows(rows, require_owner_verdict=True) == []
 
     doubled = consider_rows()
     after(doubled, EVALUATION, evaluation_row())
@@ -1609,6 +1612,15 @@ def test_the_consider_verdict_judges_the_evaluation_and_not_a_card():
         at(rows, VERDICT)[axis] = "fail"
         assert_has(ux_receipt.verify_rows(rows, require_owner_verdict=True),
                    f"requires {axis}=pass")
+
+    # Resolution is judged only when the optional invitation was actually
+    # shown. Without that event, pass would fabricate a judgment about a
+    # surface the user never saw; not_applicable is the affirmative value.
+    rows = drop(consider_rows(), RESOLUTION)
+    assert_has(ux_receipt.verify_rows(rows),
+               "owner resolution verdict must be not_applicable")
+    at(rows, VERDICT)["resolution"] = "not_applicable"
+    assert ux_receipt.verify_rows(rows, require_owner_verdict=True) == []
 
     # The change axis does not exist here, and the consider axes do not exist
     # on a route with a card to judge instead.
@@ -1761,12 +1773,13 @@ def test_challenge_fidelity_hash_is_canonical():
 def test_challenge_fidelity_refuses_a_hollow_challenge():
     """Emptied lists are refused, not measured against: the engine's block
     always owes basis facts, always names its four unconditional unchecked
-    risks, and always states the two-sided case floor. A payload below any
+    risks, and always states the positive recommendation floor. A payload below any
     floor cannot have come from the consider call this event claims."""
     for hollow in ({"must_state": []},
                    {"unchecked": ["liquidity", "valuation", "tax"]},
                    {"case_required": {}},
-                   {"case_required": {"for": 1, "against": 0}}):
+                   {"case_required": {"recommendation": 1, "support": 0,
+                                      "counter_case": "when_material"}}):
         payload = challenge_check_payload()
         payload["challenge"].update(hollow)
         try:

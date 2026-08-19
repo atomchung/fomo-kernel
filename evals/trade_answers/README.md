@@ -10,7 +10,7 @@ The deterministic lane runs the real production gates. It first calls
 `agent_case_ref` against that fixture's frozen `basis`, `consequence`, and
 `rule_collisions`, and supplies the frozen context's exact `reason` and
 `why_now` as user statements. Unsupported anchors, missing required coverage,
-one-sided cases, and a user statement promoted to `public_fact` fail closed
+malformed recommendation cases, and a user statement promoted to `public_fact` fail closed
 before any model call. `expect_eligible` is a fixture expectation checked
 against that result; it is not a trusted eligibility switch. It then applies
 the same challenge-delivery fidelity used by the `consider` UX receipt and the
@@ -23,9 +23,9 @@ binding over the character-for-character complete answer. Ordered character-offs
 `segments` must partition all of `presented_text`: every validated `agent_case`
 claim appears exactly once as an exact `claim_ref`; limitations bind only to
 the fixture challenge's existing basis/disclosure/unchecked obligations; the
-connective lane is explicitly `agent_judgment`; the single final resolution
-declares the existing open/declined/modified workflow options and visibly names
-each option marker; and paragraph separators contain whitespace only. An
+connective lane is explicitly `agent_judgment`; an optional final resolution,
+when present, declares the existing open/declined/modified workflow options and
+visibly names each option marker; and paragraph separators contain whitespace only. An
 unlabelled appended or overlapping
 sentence therefore cannot borrow a valid structured case's provenance result.
 This does not pretend to solve general NLI: whether a labelled limitation or
@@ -89,40 +89,17 @@ Candidate artifact shape:
   "fixture_id": "TA-001",
   "answer_id": "current-consider-output",
   "agent_case": {
-    "for": [{"claim": "First exact surfaced claim.", "provenance": "agent_judgment"}],
-    "against": [{"claim": "Second exact surfaced claim.", "provenance": "engine_fact", "anchor": "rule_collisions.rule-fixture-cap.state"}]
+    "recommendation": {"claim": "Do not add at this size.", "provenance": "agent_judgment"},
+    "support": [{"claim": "The trade crosses the recorded cap.", "provenance": "engine_fact", "anchor": "rule_collisions.rule-fixture-cap.state", "rule_effect": "new_breach"}],
+    "counter_case": []
   },
   "challenge": {"...": "the complete challenge emitted for this frozen evaluation"},
   "segments": [
-    {"kind": "claim_ref", "side": "for", "index": 0, "start": 0, "end": 27},
-    {"kind": "separator", "start": 27, "end": 28},
-    {"kind": "claim_ref", "side": "against", "index": 0, "start": 28, "end": 56},
-    {"kind": "separator", "start": 56, "end": 57},
-    {
-      "kind": "connective",
-      "provenance": "agent_judgment",
-      "start": 57,
-      "end": 125
-    },
-    {"kind": "separator", "start": 125, "end": 127},
-    {
-      "kind": "limitation",
-      "obligation_refs": [
-        "must_state[0]", "must_state[1]", "unchecked.liquidity",
-        "unchecked.valuation", "unchecked.tax", "unchecked.position_fit"
-      ],
-      "start": 127,
-      "end": 162
-    },
-    {"kind": "separator", "start": 162, "end": 164},
-    {
-      "kind": "resolution",
-      "workflow_options": ["open", "declined", "modified"],
-      "start": 164,
-      "end": 214
-    }
+    {"kind": "claim_ref", "side": "recommendation", "index": 0, "start": 0, "end": 24},
+    {"kind": "separator", "start": 24, "end": 25},
+    {"kind": "claim_ref", "side": "support", "index": 0, "start": 25, "end": 60}
   ],
-  "presented_text": "First exact surfaced claim. Second exact surfaced claim. That makes the choice depend on whether the exception is deliberate.\n\nThis is a recorded-book limitation.\n\nYour call: keep it open, decline it, or modify it.",
+  "presented_text": "Do not add at this size. The trade crosses the recorded cap.",
   "generator": {"host": "optional", "model": "optional", "revision": "optional"}
 }
 ```
@@ -133,8 +110,8 @@ limitation segment may cite only obligations that exist in the complete derived
 challenge; overall answer coverage remains the production delivery gate. The loader
 rejects gaps, overlaps, empty/out-of-range spans, unknown fields or segment
 kinds, repeated/omitted claims, unknown limitation references, blank substantive
-segments, non-whitespace separators, missing/duplicate/non-final resolution
-segments, resolution metadata outside open/declined/modified, and resolution
+segments, non-whitespace separators, duplicate/non-final resolution segments
+when one is present, resolution metadata outside open/declined/modified, and resolution
 text that does not visibly name those three option markers. Marker presence is
 mechanical evidence, not proof that arbitrary prose offers the choices honestly.
 
@@ -142,7 +119,7 @@ The artifact must stay outside the repository (for example under `/tmp`). It
 must contain synthetic fixture output only: `--answer-file` sends its text to
 the selected external judge, so it is not a route for a private real-decision
 answer. The segmented format is deliberate: this first slice can replay a
-normal two-paragraph-plus-resolution answer character-for-character while
+normal recommendation answer character-for-character while
 refusing unlabelled extra text. A capture author can still misclassify an
 unsupported sentence as `connective`, claim that a limitation realizes the
 wrong obligation, or negate the choices inside a resolution span even though

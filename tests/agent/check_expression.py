@@ -1,31 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""check_expression.py — the expression contract's mechanical half for the
-conversational surfaces (docs/expression-contract.md section 6; offline,
+"""Check C4 of the conversational expression contract (offline,
 deterministic).
 
-`check_card.py` has done this for the review card since #276: S-3 asserts
-that the card's disclosures sit in one place and nowhere else. Nothing did it
-for `consider`, freeform answers, no-book framing or the weekly market read,
-which is the gap #823 names — the good rules existed and were surface-bound,
-so the one surface with a checker was the one surface that behaved.
-
-This is the E series, and it is the same philosophy check_card states in its
-own header: anything a regex can decide never goes to an LLM judge.
-
-  E-1  D1 — one disclosure block, and it is the tail of the answer.
-  E-2  D3 — every line of it carries the registered prefix, and that prefix
-       appears nowhere else.
-  E-3  D5 — the block is at most five lines.
-  E-4  D6 — no limitation is stated twice inside the block.
-  E-5  C4 — no engine payload token reaches the user.
-
-What is deliberately absent: D2 (which qualifiers stay inline) and D4
-(whether a disclosure's condition actually fired). Both need a reader who
-knows what the sentence is about. A prefix check that pretended to cover them
-would be the structural gate this repository has already been burned by —
-proof that a marker is present is not proof that the right thing sits behind
-it.
+Issue #825 retired E-1 through E-4. They classified block position, a literal
+prefix, line count, and exact-string repetition; none could tell whether a
+limitation mattered or where it read clearly. E-5 remains because leaking an
+engine payload token is an exact, deterministic product defect.
 
 The token blacklist for E-5 is READ FROM THE SCHEMAS, never transcribed here.
 `skills/fomo-kernel/schemas/*.schema.json` already enumerate the engine's own
@@ -47,25 +28,11 @@ import json
 import pathlib
 import re
 import sys
-import unicodedata
 from dataclasses import dataclass
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SCHEMA_DIR = ROOT / "skills" / "fomo-kernel" / "schemas"
 DEFAULT_FIXTURE = ROOT / "tests" / "agent" / "expression-witnesses.json"
-
-# docs/expression-contract.md D3, "every conversational surface" row. The card
-# footnote's own prefix is a different row of that registry and is checked by
-# check_card.py S-3, not here.
-PREFIX = "[i] "
-_BLOCK_LINE_RE = re.compile(r"^\[i\] \S")
-# Anything that looks like an attempt at the prefix. A line matching this but
-# not _BLOCK_LINE_RE is a malformed disclosure line rather than prose, which is
-# what makes E-2 a check and not a formatting preference.
-_PREFIX_ATTEMPT_RE = re.compile(r"^\s*[\[(]\s*i(?:nfo)?\s*[\])]\s*", re.I)
-
-# D5. Five, measured: see the expression contract's own derivation.
-LINE_CAP = 5
 
 # E-5's schemas. Two files, not the whole directory: these are the two that
 # enumerate what a `consider` answer's payload can say, which is exactly the
@@ -79,7 +46,7 @@ _TOKEN_SCHEMAS = ("evaluation-challenge.schema.json", "trade-evaluation.schema.j
 _TOKEN_EXEMPT = frozenset({"as_of"})
 
 
-ASSERTIONS = ("E-1", "E-2", "E-3", "E-4", "E-5")
+ASSERTIONS = ("E-5",)
 
 
 @dataclass
@@ -131,101 +98,6 @@ def internal_tokens(schema_dir: pathlib.Path = SCHEMA_DIR) -> tuple:
                         if "_" in token and token not in _TOKEN_EXEMPT))
 
 
-def _lines(text: str) -> list:
-    return text.replace("\r\n", "\n").split("\n")
-
-
-def _block_bounds(lines: list):
-    """`(start, end)` of the disclosure block, or `None` when there is none.
-
-    A block is the maximal run of prefixed lines. Finding it as a run rather
-    than as "every prefixed line" is what lets E-1 report an interleaved
-    answer as one failure with evidence instead of silently accepting the
-    last run."""
-    indices = [index for index, line in enumerate(lines) if _BLOCK_LINE_RE.match(line)]
-    if not indices:
-        return None
-    return indices[0], indices[-1]
-
-
-def _e1_single_tail_block(lines: list, bounds) -> Finding:
-    label = "D1: disclosures form one block, and it ends the answer"
-    if bounds is None:
-        # D4: nothing fired, nothing rendered. Not a violation.
-        return Finding("E-1", True, label)
-    start, end = bounds
-    problems = []
-    stray = [lines[i].strip() for i in range(start, end + 1)
-             if lines[i].strip() and not _BLOCK_LINE_RE.match(lines[i])]
-    if stray:
-        problems.append(f"prose interleaved with the block: {stray[0][:70]}")
-    after = [line.strip() for line in lines[end + 1:] if line.strip()]
-    if after:
-        problems.append(f"content after the block: {after[0][:70]}")
-    return Finding("E-1", not problems, label, "; ".join(problems))
-
-
-def _e2_fixed_prefix(lines: list, bounds) -> Finding:
-    """Every disclosure line carries the registered prefix exactly.
-
-    Only the *form* is checkable here. Whether a line that carries no prefix
-    at all is really a disclosure hiding in prose is a semantic question this
-    file does not pretend to answer — what it does catch is the near miss:
-    an indented `[i]`, an `[info]`, a `(i)`. Those are the shapes a prefix
-    drifts into, and an unrecognized prefix means the block is invisible to
-    every other check here, which is why a near miss is a failure rather than
-    a formatting quibble."""
-    label = f"D3: every disclosure line carries the exact prefix {PREFIX!r}"
-    problems = []
-    for line in lines:
-        if not line.strip() or _BLOCK_LINE_RE.match(line):
-            continue
-        if _PREFIX_ATTEMPT_RE.match(line):
-            problems.append(f"malformed disclosure prefix: {line.strip()[:70]}")
-    return Finding("E-2", not problems, label, "; ".join(problems))
-
-
-def _e3_line_cap(lines: list, bounds) -> Finding:
-    label = f"D5: the disclosure block is at most {LINE_CAP} lines"
-    if bounds is None:
-        return Finding("E-3", True, label)
-    start, end = bounds
-    count = sum(1 for i in range(start, end + 1) if _BLOCK_LINE_RE.match(lines[i]))
-    return Finding("E-3", count <= LINE_CAP, label,
-                   "" if count <= LINE_CAP else f"{count} lines, cap is {LINE_CAP}")
-
-
-def _normalize(line: str) -> str:
-    """Fold a disclosure line to what it says, for E-4's repeat test.
-
-    Case, punctuation and whitespace are dropped; wording is not. Two lines
-    that state the same limitation in genuinely different words are not caught
-    here, and this docstring says so rather than letting the check's name
-    imply otherwise."""
-    stripped = line[len(PREFIX):] if line.startswith(PREFIX) else line
-    folded = "".join(char for char in unicodedata.normalize("NFKC", stripped).lower()
-                     if not unicodedata.category(char).startswith("P")
-                     and not char.isspace())
-    return folded
-
-
-def _e4_no_repeats(lines: list, bounds) -> Finding:
-    label = "D6: no limitation is stated twice in the block"
-    if bounds is None:
-        return Finding("E-4", True, label)
-    start, end = bounds
-    seen, repeated = set(), None
-    for index in range(start, end + 1):
-        if not _BLOCK_LINE_RE.match(lines[index]):
-            continue
-        key = _normalize(lines[index])
-        if key and key in seen and repeated is None:
-            repeated = lines[index].strip()
-        seen.add(key)
-    return Finding("E-4", repeated is None, label,
-                   "" if repeated is None else f"repeated line: {repeated[:70]}")
-
-
 def _e5_no_internal_tokens(text: str, tokens) -> Finding:
     label = "C4: no engine payload token reaches the user"
     hits = [token for token in tokens
@@ -235,17 +107,9 @@ def _e5_no_internal_tokens(text: str, tokens) -> Finding:
 
 
 def check_expression(text: str, tokens=None) -> list:
-    """The E series against one conversational answer."""
-    lines = _lines(text)
-    bounds = _block_bounds(lines)
+    """The deterministic expression assertion against one answer."""
     tokens = internal_tokens() if tokens is None else tokens
-    return [
-        _e1_single_tail_block(lines, bounds),
-        _e2_fixed_prefix(lines, bounds),
-        _e3_line_cap(lines, bounds),
-        _e4_no_repeats(lines, bounds),
-        _e5_no_internal_tokens(text, tokens),
-    ]
+    return [_e5_no_internal_tokens(text, tokens)]
 
 
 # ─────────────────────────── witness fixture ───────────────────────────

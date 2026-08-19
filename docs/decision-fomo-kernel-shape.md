@@ -229,19 +229,20 @@ revisit as a strategy discussion rather than a schema change.
 
 ## 7. Non-goal revision
 
-The recommendation boundary is being reconsidered. An investing agent cannot
-avoid the question, so the honest response is to disclose the trade-offs of an
-action and the direction one believes, rather than to refuse.
+The recommendation boundary was lifted for the live-decision lane on
+2026-08-19 by Issue #825's constraint-deletion slice. An investing agent cannot
+avoid the question, so the honest response is to recommend a direction with
+grounded support rather than to refuse.
 
 Split the current non-goal in two:
 
-- **Security recommendations — to be lifted.** A recommendation is admissible
-  when it carries the engine-computed consequence for that user's book, a
-  falsifier stating what would prove it wrong, and per-claim provenance.
-  Because it is written into the same append-only ledger with the same
-  falsifier field as a user's own thesis, the next review reconciles the
-  agent's own calls with the same machinery it uses on the user's. The agent
-  may advise, but it may not advise and forget.
+- **Security recommendations — lifted for bounded candidates.** A recommendation
+  is admissible when it carries the engine-computed consequence for that user's
+  book and per-claim provenance. The agent may rank candidates named by the
+  user or already present in the recorded book. Open-ended discovery remains
+  outside this route. Ephemeral comparison rows are not persisted; the selected
+  or still-live candidate is rerun persistently so the decision that matters is
+  recorded.
 - **Market forecasts — kept as a non-goal.** "This position takes your
   semiconductor exposure to 48%" is anchored in the user's record and checkable
   now. "NVDA reaches $250" has no engine support and no falsification date.
@@ -261,14 +262,15 @@ instrument is liquid enough to exit. A falsifier, provenance labels, and a
 ledger that reconciles later add *accountability after the fact*; they do not
 supply *safety before it*. So Layer 2 is the gate for starting, not the proof
 that the result is safe — the remaining gaps above need their own answers, and
-the honest interim position is that a recommendation should say which of them it
-has not checked.
+the answer should surface whichever of them could materially reverse the
+recommendation, not recite every unchecked dimension.
 
 **Sequencing.** Lifting the recommendation ban before Layer 2 exists would be
 worse than keeping it: the model would fill the consequence gap with invented
 prose, losing the discipline without gaining precision. Order: slim the
 instruction set, build rule backtest and rule collision, build hypothetical
-trade consequence, then lift the ban.
+trade consequence, then lift the ban. That sequence is now complete for the
+bounded live-decision lane; the deterministic and provenance boundaries remain.
 
 Affected text elsewhere: the "Security recommendations or market forecasts"
 non-goal in [roadmap.md](roadmap.md) and "never answers what security should be

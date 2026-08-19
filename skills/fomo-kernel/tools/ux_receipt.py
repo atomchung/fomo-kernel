@@ -50,11 +50,12 @@ persisted; the raw strings never reach the trace. See `_grounding_fidelity`.
 
 The pre-trade lane (`review.py consider`, #544 Slice B) is the second
 card-free route. Its product surface is one inline textual answer carrying
-the engine-declared challenge (#479) plus one resolution invitation, so its
+the engine-declared challenge (#479), plus one resolution invitation only
+when the conversation actually needs it, so its
 trace owes `evaluation_presented` — with challenge-delivery fidelity computed
 the same transient-file way from `--challenge-check-file`; see
 `_challenge_fidelity` for exactly which halves are machine-decidable — and
-one `resolution_presented` after it, whose `workflow_state` records the
+at most one `resolution_presented` after it, whose `workflow_state` records the
 user's word and never a broker execution. `consider` creates no session, so
 the trace is keyed by the engine's own `evaluation_id`, the way a refresh
 trace is keyed by its `refresh_id`.
@@ -252,11 +253,10 @@ VERDICT_AXES = ("controls", "card", "memory", "change",
 #                       `cards: False` forbids rather than exempts.
 #   evaluation  True  — exactly one `evaluation_presented` (the inline
 #                       TradeEvaluation challenge delivery, with its
-#                       machine-computed fidelity evidence) and exactly one
-#                       `resolution_presented` after it. JSON on disk is not
-#                       delivery; this pair is what proves the engine's
-#                       obligations and the resolution invitation reached a
-#                       human (#544 Slice B).
+#                       machine-computed fidelity evidence), plus at most one
+#                       later `resolution_presented` when that invitation was
+#                       actually shown. JSON on disk is not delivery; the
+#                       evaluation surface is the required proof (#544 Slice B).
 #               False — both events must be ABSENT, the same #523 rule the
 #                       other booleans follow: a route that never presents an
 #                       evaluation must not be able to claim one.
@@ -320,15 +320,14 @@ ROUTE_CONTRACTS = {
     # The pre-trade evaluation lane (#544 Slice B, on #479's TradeEvaluation
     # contract). `review.py consider` creates no session and renders no card;
     # its whole product surface is one inline textual answer that must carry
-    # the engine-declared challenge, and one resolution invitation that
-    # records the user's word without claiming execution. The trace is keyed
+    # the engine-declared challenge. A later resolution invitation is optional
+    # and records the user's word without claiming execution. The trace is keyed
     # by the engine's own `evaluation_id`, the way `refresh` uses its
     # `refresh_id`.
-    #   evaluation — the load-bearing pair: the challenge delivery with its
-    #             `--challenge-check-file` fidelity evidence, then the
-    #             resolution invitation. A receipt with neither has proven
-    #             only that JSON existed, which is exactly what #544 forbids
-    #             citing as delivery.
+    #   evaluation — the challenge delivery with its `--challenge-check-file`
+    #             fidelity evidence. A receipt without it has proven only that
+    #             JSON existed, which is exactly what #544 forbids citing as
+    #             delivery. Resolution is a later optional event.
     #   change  — False and therefore forbidden: `consider` never mutates the
     #             book, so a change surface here would claim a recording that
     #             cannot have happened.
@@ -344,16 +343,16 @@ ROUTE_CONTRACTS = {
     #   comprehension / usefulness / friction / resolution — the four
     #             route-specific owner judgments (#544): understood as
     #             presented, specific versus generic advice, cheap enough to
-    #             use again, and the resolution boundary understood as
-    #             non-execution. All four must be affirmative before
-    #             `--require-owner-verdict` accepts the run.
+    #             use again, and — only when an invitation was shown — the
+    #             resolution boundary understood as non-execution. Resolution
+    #             narrows to `not_applicable` when the trace has no invitation.
     "consider": {
         "cards": False, "cash_anchor": False, "opener": (), "change": False,
         "evaluation": True,
         "verdict": {"controls": PASS_FAIL_OR_NA, "card": ONLY_NOT_APPLICABLE,
                     "memory": PASS_FAIL_OR_NA,
                     "comprehension": PASS_FAIL, "usefulness": PASS_FAIL,
-                    "friction": PASS_FAIL, "resolution": PASS_FAIL},
+                    "friction": PASS_FAIL, "resolution": PASS_FAIL_OR_NA},
         "must_pass": ("controls", "card", "comprehension", "usefulness",
                       "friction", "resolution"),
     },
@@ -738,7 +737,7 @@ def _challenge_fidelity_payload(payload: dict) -> dict:
     # review, 2026-07-30): the engine's block always owes at least the basis
     # facts, always names its four unconditional unchecked risks
     # (evaluation-challenge.schema.json minItems: 4), and always states the
-    # two-sided case floor — a payload below any of those floors cannot have
+    # positive recommendation floor — a payload below an accepted floor cannot have
     # come from the consider call this event claims to record.
     if not must_state:
         raise ReceiptError(
@@ -749,12 +748,20 @@ def _challenge_fidelity_payload(payload: dict) -> dict:
         raise ReceiptError(
             "--challenge-check-file challenge unchecked names fewer than the four "
             "unconditional risks the engine always lists; paste the complete block")
-    if not isinstance(case_required, dict) or not all(
-            isinstance(case_required.get(side), int) and case_required[side] >= 1
-            for side in ("for", "against")):
+    positive_floor = (isinstance(case_required, dict)
+                      and isinstance(case_required.get("recommendation"), int)
+                      and case_required["recommendation"] >= 1
+                      and isinstance(case_required.get("support"), int)
+                      and case_required["support"] >= 1
+                      and case_required.get("counter_case") == "when_material")
+    legacy_floor = (isinstance(case_required, dict) and all(
+        isinstance(case_required.get(side), int) and case_required[side] >= 1
+        for side in ("for", "against")))
+    if not (positive_floor or legacy_floor):
         raise ReceiptError(
             "--challenge-check-file challenge case_required must state the "
-            "two-sided floor (for/against, each at least 1)")
+            "positive floor (recommendation/support, each at least 1; "
+            "counter_case when_material), or a legacy for/against floor")
     presented_text = payload.get("presented_text")
     if not isinstance(presented_text, str) or not presented_text.strip():
         raise ReceiptError("--challenge-check-file presented_text must be a non-empty string")
@@ -1065,20 +1072,24 @@ def _first_surface(rows: list[dict]) -> int:
 def _verdict_scales(contract: dict, rows: list[dict]) -> dict:
     """The route's verdict scales, narrowed by what the trace actually shows.
 
-    Exactly one narrowing exists, and it is the card-free lane's own honesty
-    problem. `controls` asks whether the user could answer through real
+    Two trace-driven narrowings exist on card-free lanes. `controls` asks
+    whether the user could answer through real
     controls; a book refresh that raised no confirmation never showed one, so
     "pass" there would be a judgment about nothing — the same fabrication as a
     card verdict on a run that rendered no card. A refresh that *did* raise one
     must judge it rather than calling it inapplicable. Both directions are
     mechanically decidable from the trace, so neither is left to discipline.
 
-    Routes whose declared `controls` scale has no `not_applicable` (every
-    card-producing route) are untouched by this.
+    `resolution` follows the same rule: judge it only when the optional
+    invitation was actually presented. Routes whose declared scale has no
+    `not_applicable` are untouched by these narrowings.
     """
     scales = dict(contract["verdict"])
     if "not_applicable" in scales.get("controls", ()):
         scales["controls"] = PASS_FAIL if _positions(rows, "question_presented") \
+            else ONLY_NOT_APPLICABLE
+    if "not_applicable" in scales.get("resolution", ()):
+        scales["resolution"] = PASS_FAIL if _positions(rows, "resolution_presented") \
             else ONLY_NOT_APPLICABLE
     return scales
 
@@ -1121,10 +1132,8 @@ def timing_integrity(rows: list[dict]) -> dict:
         complete = all(len(positions) == 1 for positions in anchors)
         reason = "complete owner-verdict multi-stage trace required"
     elif contract["evaluation"]:
-        complete = bool(_positions(rows, "evaluation_presented")) \
-            and bool(_positions(rows, "resolution_presented"))
-        reason = ("owner-verdict trace with the evaluation presentation and "
-                  "resolution invitation required")
+        complete = bool(_positions(rows, "evaluation_presented"))
+        reason = "owner-verdict trace with the evaluation presentation required"
     else:
         complete = bool(_change_surfaces(rows))
         reason = "owner-verdict trace with a visible change surface required"
@@ -1497,8 +1506,8 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False,
 
     # The pre-trade lane's own delivery pair (#544). A stored evaluation row
     # is not delivery: what this route has instead of cards is one recorded
-    # challenge presentation — carrying its machine-computed fidelity
-    # evidence — and one resolution invitation after it.
+    # challenge presentation carrying its machine-computed fidelity evidence.
+    # A resolution invitation is optional and may follow it once.
     evaluations = _positions(rows, "evaluation_presented")
     resolutions = _positions(rows, "resolution_presented")
     if contract["evaluation"]:
@@ -1506,9 +1515,8 @@ def verify_rows(rows: list[dict], require_owner_verdict: bool = False,
             errors.append(f"{route} must record exactly one evaluation_presented event — "
                           "the inline challenge delivery is the surface this route exists "
                           "to prove")
-        if len(resolutions) != 1:
-            errors.append(f"{route} must record exactly one resolution_presented event — "
-                          "the invitation is shown once and its workflow state recorded")
+        if len(resolutions) > 1:
+            errors.append(f"{route} may record at most one resolution_presented event")
         if evaluations and resolutions and resolutions[0] <= evaluations[0]:
             errors.append("the resolution invitation must follow the evaluation "
                           "presentation it resolves")

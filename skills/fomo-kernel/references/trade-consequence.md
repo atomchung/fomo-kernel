@@ -2,13 +2,13 @@
 
 A user mid-decision asks something like *"I'm thinking of buying NVDA — what does that do to my book?"* They are not in a review and will not hand over a CSV. `consider` answers from what the product already stores: the local ledger, or transaction files if you have them in hand.
 
-This is Layer 2 (docs/decision-fomo-kernel-shape.md §3-4): deterministic arithmetic over a hypothetical trade. The engine computes the consequence; it never recommends. Owner ruling 2026-07-27: build the case for and against from `consider`'s output, and take no position yourself.
+This is Layer 2 (docs/decision-fomo-kernel-shape.md §3-4): deterministic arithmetic over a hypothetical trade. The engine computes the consequence; the agent turns it and any relevant sourced evidence into an explicit recommendation. The recommendation is `agent_judgment`, never a disguised engine output or execution claim.
 
 `consider`'s answer is plain conversation, not a card — which means it is a freeform surface and `freeform-answers.md`'s default applies: a quick, direct, textual answer, with no chart or multi-tool production unless the user asks for more.
 
 ## When this applies
 
-Any pre-trade question about a single hypothetical trade against the user's current book — "should I buy this," "am I chasing," "should I add here," "does this break my own rule." Not for a review (use `prepare`), and not for a question about several trades at once or a portfolio redesign — `consider` prices exactly one hypothetical trade.
+Any pre-trade question about a hypothetical trade against the user's current book — "should I buy this," "am I chasing," "should I add here," "does this break my own rule." Not for a review (use `prepare`). `consider` prices one hypothetical trade per call; a bounded comparison uses one ephemeral call per user-named or recorded-book candidate.
 
 ## Running it
 
@@ -126,8 +126,8 @@ The response is still `{"status": "error", "error": "<message>"}`, and it carrie
 - The first visible sentence is a decision tension — what the trade-off actually is — never the engine's error message and never a request to restart the review.
 - Frame at least two of the user's own nominated options — the specific holdings *they* are weighing, gathered from the conversation, never invented. `usable_facts` carries no opinion on which tickers are on the table; that is the user's context, not the engine's.
 - For each option, state what selling (or keeping) it would commit the user to believing, and which fact in `usable_facts` it trades off — cite only fields the payload actually carries. Nothing here licenses recomputing a weight, a rule collision, or any other arithmetic the refusal could not produce; a fact absent from `usable_facts` is a fact this answer does not have, not one to estimate.
-- Never name which security to sell. This file's opening ruling — the engine computes, it never recommends — holds exactly as hard on a refusal as it does on a priced answer.
-- Say once that the consequence itself — the exact post-trade weight, the cash impact, whether it would collide with the rule — is unavailable. That is the one thing this route could not compute; everything in `usable_facts` is offered instead of it, not as proof it does not matter. It is a disclosure like any other and goes in the tail block ([expression contract](../../../docs/expression-contract.md) D1), not attached to an individual claim.
+- Recommend a candidate only when the available frozen facts genuinely distinguish the options. Otherwise name the missing discriminator instead of manufacturing a ranking.
+- Say once that the consequence itself — the exact post-trade weight, the cash impact, whether it would collide with the rule — is unavailable. That is the one thing this route could not compute; everything in `usable_facts` is offered instead of it, not as proof it does not matter. Place this material limitation where it makes the framing clearest ([expression contract](../../../docs/expression-contract.md) D1).
 
 #### One proposed trade
 
@@ -143,7 +143,7 @@ that would let the same proposal answer — for example, a usable current-book
 basis — without asking the user to repeat any known reason, timing, premise, or
 candidate. Do not expose commands, gates, provider attempts, recovery/retry
 chronology, QA steps, payload/schema names, unrelated symbols, or maintainer
-work. Do not add arithmetic, choose or rank a security, claim execution, or
+work. Do not add arithmetic, claim execution, or
 promise background work.
 
 #### No safe decision value
@@ -248,8 +248,8 @@ Read it as the floor of the answer, and read `SKILL.md` rule 8 with it. That rul
 | `must_state` | Ordered owed facts, each `{topic, value}` plus `anchor` when the fact is addressable. The trailing two topics name holdings: `excluded_holding` for what fell out of the book entirely, `out_of_scope` for what stayed in it with its composition unread. |
 | `rule_effects` | The product-safe projection of what this trade does to each of the user's own rules: `effect`, the `limit` it was judged against and its `limit_source`, and the `must_convey` / `must_not_convey` slots. Empty when no rule speaks. See [Reading a rule collision](#reading-a-rule-collision). |
 | `quote_verbatim` | The user's own words, to be reproduced rather than summarized. Empty when no `--decision-context` was supplied. |
-| `unchecked` | What the engine did not look at on this call. |
-| `case_required` | The floor for a two-sided case: at least one claim on each side. |
+| `unchecked` | Research dimensions the engine did not look at. Surface only those material to this recommendation. |
+| `case_required` | The preferred positive case: one recommendation, at least one supporting claim, and a counter-case when material. |
 | `required_coverage` | The mechanically enforced subset — what an `--agent-case` submission is *refused* for leaving out. |
 
 `must_state` entries are facts, not sentences. Several belong in one sentence: the `basis` and `price_basis` entries are one clause — *"computed on your recorded book as of the 20th, nine days old and never reconciled against a broker view, priced at Tuesday's closes"* — not a bullet each. The order is the order the facts depend on each other (the basis first because every number after it is measured against that book, the price session next because those numbers are measured at one, the disclosures last because they qualify what precedes them), not a script to read aloud. `basis.state_version` is the exception worth naming: it is the book's exact identity, present so a QA run can compare what the user saw against the frozen payload mechanically. Carry it, but do not recite a hash at someone mid-decision — *"this is your book as of the 20th"* is the same fact in the register the rest of the answer is in.
@@ -258,7 +258,7 @@ Read it as the floor of the answer, and read `SKILL.md` rule 8 with it. That rul
 
 `anchor` is present on most entries and absent on a few. A dot-separated path cannot address a ticker that itself contains a dot, so `2330.TW`'s own weight arrives with its value and no `anchor`: the fact is still owed and still stated, it simply cannot be cited by path. Every anchor that *is* offered has already been resolved against the frozen record, so an anchor from this block is always one the case validator accepts.
 
-`unchecked` names risks the engine never went near — distinct from `disclosures`, which are gaps in numbers it did compute. Silence about a risk nobody checked reads as a clean bill of health the engine never gave.
+`unchecked` names available research dimensions the engine never went near — distinct from `disclosures`, which are gaps in numbers it did compute. It is an availability list, not a recital quota. State an unchecked dimension when it could change the recommendation or when the wording would otherwise imply it was checked; omit irrelevant dimensions.
 
 | Key | What it means |
 |---|---|
@@ -275,7 +275,7 @@ Read it as the floor of the answer, and read `SKILL.md` rule 8 with it. That rul
 
 The block is emitted, never stored: it is a pure function of the premise, basis, consequence, collisions and context the evaluation row already freezes, and it takes no part in the `evaluation_id`. A `--resolve` call carries none, because nothing new is being answered there.
 
-Under maintainer QA, delivery of these obligations is proven rather than assumed. The receipt tool's card-free `consider` route ([ux-receipt.md](ux-receipt.md)) captures the challenge emitted on the call's own stdout into a transient comparison file, paired with the exact answer text shown to the user. The tool computes the coverage and verbatim fidelity itself rather than trusting a self-report, and persists only booleans, counts, and a hash — never the challenge or the presented text. The same trace also records one resolution invitation after it, whose recorded workflow state is the user's own word on what happened next, never proof that a trade was executed.
+Under maintainer QA, delivery of these obligations is proven rather than assumed. The receipt tool's card-free `consider` route ([ux-receipt.md](ux-receipt.md)) captures the challenge emitted on the call's own stdout into a transient comparison file, paired with the exact answer text shown to the user. The tool computes the coverage and verbatim fidelity itself rather than trusting a self-report, and persists only booleans, counts, and a hash — never the challenge or the presented text. If the conversation actually presents a later resolution invitation, the trace may record it once; it is not required for every answer.
 
 ## Route-specific synthesis
 
@@ -285,9 +285,9 @@ voice through the [output-voice contract](../../../docs/output-voice.md)
 C1–C4. Those own how this answer speaks; this section owns only the `consider`
 route's salience facts and answer slots.
 
-The challenge block is the floor — what must be present. On a representative
-book it carries roughly seventeen owed facts and half a dozen unchecked items;
-the route slots below organize that fixed obligation without changing it.
+The challenge block is the factual floor. The route slots below select the
+decision-relevant facts without turning unchecked dimensions into mandatory
+disclaimer copy.
 
 ### Lead selection
 
@@ -296,42 +296,27 @@ Unless a truth-critical disclosure changes how an earlier item can be understood
 1. **A user-authored rule collision** — `rule_effect` of `new_breach` or `worsened_existing_breach`. The user wrote that line themselves; this trade crossing it or digging further into it outranks everything else.
 2. **The largest non-obvious portfolio consequence** — weight, concentration or driver overlap, cash. *Non-obvious* is load-bearing: the user already knows they hold the position and that the price fell. What they cannot see from where they sit is what the trade does to the whole book's shape.
 3. **The decision-context read** — whether `why_now` looks like a real evidence delta or a price move wearing one, labelled as your judgment. [market-lookup.md](market-lookup.md) governs verifying it.
-4. **Routine basis and unchecked boundaries** — present, compressed, and in the tail block rather than in the body; they displace the decision only when they materially undermine it, which is the one case that promotes them into a body sentence.
+4. **Routine basis and unchecked boundaries** — include them when they materially qualify or could reverse the recommendation. Do not append a standard tail merely because a field exists.
 
-Special cases: `improved_but_still_over` and `resolved_existing_breach` are improvements to an already-broken line, never framed as a new breach — an improvement that leaves the line crossed still leads with both truths, and one that clears it is worth saying out loud rather than passing in silence. A `partial_book` or missing-FX denominator qualifies every affected percentage in the same sentence — it is the textbook truth-critical qualifier (expression contract D2), because the number means something different without it. A stale or cost-basis book leads only when it makes the apparent consequence unreliable enough to change the decision; otherwise it is an ordinary disclosure and goes in the tail block. With no collision, lead with the largest changed consequence; with no material change, say that the supported dimensions show little change and name what stays unchecked — never convert "not measured" into "no risk".
+Special cases: `improved_but_still_over` and `resolved_existing_breach` are improvements to an already-broken line, never framed as a new breach — an improvement that leaves the line crossed still leads with both truths, and one that clears it is worth saying out loud rather than passing in silence. A `partial_book` or missing-FX denominator qualifies every affected percentage in the same sentence — it is the textbook truth-critical qualifier (expression contract D2), because the number means something different without it. A stale or cost-basis book leads only when it makes the apparent consequence unreliable enough to change the decision; otherwise include it only when it materially qualifies the recommendation. With no collision, lead with the largest changed consequence; with no material change, say that the supported dimensions show little change and name only what stays materially unchecked — never convert "not measured" into "no risk".
 
 ### Answer slots
 
-Two parts, and the split is the point: **a judgment body, then one tail
-disclosure block.** Owner ruling 2026-08-14 (#823) — the shape that used to sit
-here folded limitations into the second paragraph's prose, which is how a
-`consider` answer accumulated hedging clauses the review card had already been
-cured of.
-
-**The body** — the judgment, and nothing about the limits of it. Default to two
-compact paragraphs plus one resolution sentence; a shape, not a template, and
-there is no word-count target.
+Default to one compact recommendation body. There is no word-count target or
+mandatory paragraph count.
 
 - **Paragraph 1 — answer first:** the lead, its key engine support, and any
   *truth-critical* qualifier (D2) without which one of its own numbers would be
   misread.
-- **Paragraph 2 — the real trade-off:** the strongest case the other way,
-  engaging paragraph 1's own support, plus the user's exact `reason` /
-  `why_now` where owed.
-- **Resolution sentence:** keep it open, decline it, or modify it — the user's
-  call, and never imply a broker action occurred.
+- **Material counter-case:** include the strongest objection only when it could
+  change the recommended action, plus the user's exact `reason` / `why_now`
+  where owed.
 
-**The tail block** — every remaining owed limitation, one line each, prefixed
-`[i] `, at most five lines
-([expression contract](../../../docs/expression-contract.md) D1–D6). The
-`challenge` block is what fills it: the basis and price session merge into one
-line, `unchecked` is one line together, and two disclosures qualifying the same
-number are one line. Nothing that already rode a body sentence as a
-truth-critical qualifier repeats here (D6).
-
-The block is a *placement* rule, never a discount on the floor: every
-`must_state` entry is still owed, and an entry that will not fit merges with a
-neighbour rather than disappearing.
+Place any remaining material limitations where they make the answer easiest to
+understand ([expression contract](../../../docs/expression-contract.md) D1–D6).
+Nothing that already rode a body sentence as a truth-critical qualifier repeats
+elsewhere (D6). This freedom is never a discount on the factual floor: every
+`must_state` entry is still owed.
 
 ### One payload, two renderings
 
@@ -343,49 +328,46 @@ A fictional book, run through the real engine: six US holdings at $100,000 total
 
 Every number is anchored and every owed fact is present, and it fails on both axes this section governs. On judgment: the for-side states what the user already knows, the against-side is the disclosure list wearing a new heading and never touches the for-side, and nothing says what the decision actually trades off. On expression: there is no body/block split at all — the limitations are inline sentences in the same list as the numbers, which is D1's wall of per-number interruptions in its purest form.
 
-**Decision-first, body then block — same payload, same floor:**
+**Decision-first recommendation — same payload, same floor:**
 
-> What this buy mainly changes is not your NVDA entry price — it is the size of a bet that is already past its limit. Priced on cost rather than on current market value, NVDA goes from 30% to about 38% and semiconductors as a group from 60% to about 65% — and that 65% is measured over the part of the book that carries a classification, which JNJ, PG and KO do not. The position-size line was already triggered before this trade, so this widens an existing breach rather than creating one.
+> Do not add NVDA at this size. Priced on cost rather than on current market value, NVDA goes from 30% to about 38% and semiconductors as a group from 60% to about 65% — and that 65% is measured over the classified part of the book, which excludes JNJ, PG and KO. The position-size line was already triggered before this trade, so this widens an existing breach rather than creating one.
 >
-> The strongest case the other way attacks the lead's own numbers: these are cost weights, so if this week's drop hit your semiconductor names hardest, market-value concentration is lower than the record shows — and your largest position being your highest-conviction name is a choice, not an accident. Against that, your own words — "it dropped hard this week and the discount feels too good to pass up" — describe a price move, not new evidence, and my read is that nothing in them names a change in the business.
+> The material case the other way is that these are cost weights: if this week's drop hit your semiconductor names hardest, market-value concentration could be lower than the record shows. But your own words — "it dropped hard this week and the discount feels too good to pass up" — describe a price move, not new business evidence. That is my read, not an engine fact.
 >
-> Your call: keep this open, decline it, or modify the size — nothing has been executed.
->
-> `[i] ` Computed on your recorded book as of June 15 — 45 days old, never reconciled against a broker view.
-> `[i] ` The −$112,750 cash line is an unanchored running sum, not a real overdraft: no deposit has ever been recorded here.
-> `[i] ` Not checked: liquidity, valuation, tax, whether the position still fits you, and whether your why-now is new information or a price move.
+> The recorded book is 45 days old and has never been reconciled against a broker view. Its −$112,750 cash line is an unanchored running sum, not evidence of a real overdraft. Nothing has been executed.
 
-The floor is identical — same numbers, same disclosures, same verbatim quotes, same unchecked list. What changed on judgment: one lead was chosen (the second salience tier, since no user rule is on file), the counter-case's first claim directly attacks the lead's supporting numbers, the user's own words are read against the evidence-delta question and labelled as the agent's own read (C1).
+The factual floor is identical — same numbers, disclosures, and verbatim quotes. The unchecked list is filtered by materiality. One lead is chosen, and any counter-case directly attacks its support rather than satisfying symmetry.
 
-What changed on expression, and which rule decides each: the cost-versus-market basis and the incomplete classification denominator stay in the body, because they are the *unit* and the *denominator* of the numbers in that sentence (D2) — without them those percentages refer to something else. Staleness, the cash-balance reliability and the unchecked list are not properties of any number's meaning, so they go to the block (D1) — three lines, under the cap, with `unchecked` merged into one line rather than five (D5). Nothing appears in both places (D6).
+What changed on expression, and which rule decides each: the cost-versus-market basis and the incomplete classification denominator stay in the body, because they are the *unit* and the *denominator* of the numbers in that sentence (D2) — without them those percentages refer to something else. Staleness and cash reliability are collected because both materially qualify confidence in the recommendation. No marker, tail position, or numeric cap decides that placement (D1/D3/D5), and nothing appears twice (D6).
 
-The `[i] ` prefixes above are shown as code spans so this document's own Markdown does not render them as prose; in a real answer they are plain text at the start of the line.
+## The recommendation case
 
-## The case for and against
-
-The engine states the consequence and the rule collisions; it never recommends. Build the case for and against directly from that output, and take no position on which side wins — that call belongs to the user.
+The engine states the consequence and rule collisions. Recommend what to do, then support it from that output and relevant sourced evidence. Include a counter-case only when it could change the action.
 
 Every claim you add carries its own label: state your record says (drawn straight from `before`/`after`/`delta`/`rule_collisions`), a public fact (something you looked up, sourced), or your own judgment. Do not blend them into one unlabeled sentence. When and how to look something up at all — the standing position packet, the event-lookup triggers, the neutral query, the stop discipline — is [market-lookup.md](market-lookup.md)'s contract.
 
-Name what nobody checked, every time. `consider` measures weight, concentration, driver overlap, cash, and rule collisions — nothing else. Liquidity, valuation, tax consequences, and whether the position still fits this person are all real risks the engine does not measure. Silence about a risk it did not check reads as a clean bill of health it never gave. Record staleness (above) belongs on this list too whenever `stale_days` is more than trivial.
+`consider` measures weight, concentration, driver overlap, cash, and rule collisions. Liquidity, valuation, tax consequences, and position fit are available unchecked dimensions, not mandatory boilerplate. Name the ones that bear on the recommendation or prevent a false impression of coverage.
 
 You may optionally structure this case with `--agent-case`, a path to a JSON file, checked by `engine/answer_provenance.py::validate_agent_case` (#414) before anything is stored or returned:
 
 ```json
 {
-  "for": [
-    {"claim": "You have historically held through drawdowns of this size in this name without selling.", "provenance": "agent_judgment"}
-  ],
-  "against": [
+  "recommendation": {
+    "claim": "Do not add at this size.", "provenance": "agent_judgment"
+  },
+  "support": [
     {"claim": "This grows NVDA to 64% of the book.", "provenance": "engine_fact", "anchor": "consequence.after.max_pct"},
     {"claim": "This is priced on cost, not a live market value, so the weight above may be off.", "provenance": "engine_fact", "anchor": "consequence.disclosures.0"},
     {"claim": "The record is several days stale.", "provenance": "engine_fact", "anchor": "basis.stale_days"},
     {"claim": "The stock trades at a much higher earnings multiple than when you first bought it.", "provenance": "public_fact", "source": "Market data provider", "as_of": "2026-07-20"}
+  ],
+  "counter_case": [
+    {"claim": "You have historically held through drawdowns of this size in this name without selling.", "provenance": "agent_judgment"}
   ]
 }
 ```
 
-Structured claims only, never a free prose blob. If you send it, both `for` and `against` are required and neither may be empty — a one-sided or empty-sided submission is refused, matching the owner ruling above. `provenance` is one of `engine_fact` (drawn from `consider`'s own output), `public_fact` (something you looked up), or `agent_judgment` (your own reasoning) — docs/decision-fomo-kernel-shape.md §3's Layer 3 vocabulary. This flag is entirely optional; a plain `--premise` call is a complete, valid use of `consider`.
+Structured claims only, never a free prose blob. New submissions require one `recommendation` (always `agent_judgment`) and non-empty `support`; `counter_case` is optional. The legacy `for`/`against` shape remains readable so stored history replays. Claim `provenance` is one of `engine_fact`, `public_fact`, or `agent_judgment`. This flag is optional; a plain `--premise` call is complete.
 
 **A claim's provenance decides what else it must carry**, per `schemas/answer-provenance.schema.json`:
 
@@ -401,7 +383,7 @@ A rejected case is refused before it is stored or shown: the caller gets the val
 
 ## Recording what the user did
 
-Every call is recorded in a local, append-only log — nothing about it is presented back automatically, and nothing about it is required. Once the user has decided, tell the engine with `--resolve`:
+Persistent calls are recorded in a local, append-only log. Candidate fan-out uses `--ephemeral`, which computes against the existing recorded book and writes no evaluation; rerun only the selected or live candidate without the flag. Once the user has decided, tell the engine with `--resolve`:
 
 ```bash
 python3 engine/review.py consider --resolve <evaluation_id> --decision acted

@@ -180,31 +180,29 @@ invented (AGENTS.md invariant 2; AGENTS.md states the same prohibition in its
 Workflow section rather than as a numbered boundary). This file bounds what
 the agent reaches for unasked; it was never written to tell a user no.
 
-## Rule 4 — disclosures collapse into one tail block
+## Rule 4 — limitations follow relevance, not a template
 
-Owner ruling, 2026-08-14 (#823). Whatever this answer discloses — a stale
-price, a partial book, a cost-priced weight, an unresolved evidence delta,
-a risk nobody checked — goes in **one block at the end of the answer**, one
-line per limitation, each line prefixed `[i] `, at most five lines.
-[expression-contract.md](../../../docs/expression-contract.md) D1–D6 is the
-rule; this paragraph is the pointer, not a second copy.
+Use [expression-contract.md](../../../docs/expression-contract.md) D1–D6 for
+every limitation. Keep truth-critical denominator, unit, or pricing-set
+qualifiers inline. Include other limitations only when they materially qualify
+the answer, and place them where they are clearest; no marker, tail block, or
+numeric line cap is required.
 
 Two consequences worth stating in this file's own terms, because this is the
 surface where they were being got wrong:
 
 - **A short answer is not an honest one by virtue of being short.** Rule 1 is
   an effort ceiling on what an answer *produces*; it has never bounded which
-  facts an answer *owes*. When the cap in D5 binds, limitations merge — two
-  lines describing the same gap become one — and nothing is dropped.
-- **Nothing fired means no block.** An answer whose numbers carry no
-  triggered limitation ends at its last judgment. A standing "as always, this
+  facts an answer *owes*.
+- **Nothing material means no disclaimer.** An answer with no material
+  limitation ends at its last judgment. A standing "as always, this
   is not advice" tail is a manufactured disclosure (D4), which is the same
   defect as a manufactured concern.
 
 Where a disclosure is *truth-critical* to a number in the body — a partial
 denominator, a weight priced on cost, a value stated in one currency while
 its weight is measured in another — it stays in that sentence and does **not**
-repeat in the block (D2/D6). That is the same rule `trade-consequence.md`
+repeat elsewhere (D2/D6). That is the same rule `trade-consequence.md`
 already applies to `partial_book`, now stated once for every surface.
 
 ## What this does not cover
@@ -213,12 +211,11 @@ This file is an effort/scope ceiling: how much production an answer costs,
 never which facts it must state. Two axes used to be open here and they closed
 on different dates, so they are worth telling apart.
 
-**Placement and form are closed (#823, #525).** Every freeform surface now has
-one placement rule, one prefix, one cap, and a mechanical check
-(`tests/agent/check_expression.py`). The question this section used to leave
-open — whether a text-only answer's disclosures are held to the card's
-standard — is answered: they are held to the same *placement* standard as the
-card's footnote, because both are D1.
+**Relevance is governed; placement and form are free (#825).** Every freeform
+surface uses the same materiality and truth-critical qualifier rules. The
+remaining deterministic checker (`tests/agent/check_expression.py`) protects
+C4 against engine-vocabulary leaks; it does not impose a marker, position, or
+line count. The review card's footnote remains that surface's own layout.
 
 **Obligation selection is still per-route.** What the card owes comes from
 `build_honesty_ledger()`; what a `consider` answer owes comes from its

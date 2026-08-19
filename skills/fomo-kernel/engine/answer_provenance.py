@@ -4,9 +4,11 @@
 answer (issue #414, "Production provenance gate for decision-surface
 answers", Wave A scope only).
 
-``review.py::_validate_agent_case`` already enforces the *structural* shape
-of ``--agent-case``: it is an object with exactly ``for``/``against``, each
-a list of objects carrying at least ``claim``/``provenance``,
+``review.py::_validate_agent_case`` delegates the *structural* shape of
+``--agent-case`` here. The preferred positive contract carries one
+``recommendation``, non-empty ``support``, and an optional ``counter_case``;
+the legacy ``for``/``against`` envelope remains readable. Every claim carries
+at least ``claim``/``provenance``,
 ``provenance`` one of ``review.AGENT_CASE_PROVENANCE``, ``claim`` a
 non-empty string. It deliberately stops there and does not pin the exact
 field set a claim may carry — that is provenance-dependent (``anchor``/
@@ -284,7 +286,9 @@ class AnswerProvenanceError(ValueError):
 # the cross-check that keeps the two from silently drifting apart.
 PROVENANCE = ("engine_fact", "public_fact", "agent_judgment")
 
-_SIDES = ("for", "against")
+LEGACY_CASE_FIELDS = frozenset({"for", "against"})
+POSITIVE_CASE_REQUIRED = frozenset({"recommendation", "support"})
+POSITIVE_CASE_OPTIONAL = frozenset({"counter_case"})
 
 # The three frozen inputs an anchor may address. Deliberately not every key
 # `cmd_consider` freezes (`premise`, `decision`, ...) -- a claim about the
@@ -555,11 +559,12 @@ def _check_agent_judgment_claim(claim, label):
             f"{label} (agent_judgment) carries fields it must not: {sorted(extra)}")
 
 
-def _check_claim(claim, side, index, record, user_statements):
+def _check_claim(claim, section, index, record, user_statements):
     """Dispatch one claim to its provenance-specific checker. Returns
     `(anchor, resolved_value)` for an engine_fact claim (feeding the
     cross-claim disclosure-coverage check below), or None otherwise."""
-    label = f"agent_case.{side}[{index}]"
+    label = ("agent_case.recommendation" if section == "recommendation"
+             else f"agent_case.{section}[{index}]")
     if not isinstance(claim, dict):
         raise AnswerProvenanceError(f"{label} must be an object")
     text = claim.get("claim")
@@ -809,15 +814,53 @@ def _check_required_coverage(resolved_anchors, required):
 
 # ─────────────────────────── public entry point ───────────────────────────
 
+
+def agent_case_claims(agent_case):
+    """Return ``(section, index, claim)`` entries for either supported shape.
+
+    This is the single structural reader shared by the CLI preflight, the
+    semantic provenance gate, and offline presentation evaluators. The new
+    shape states a conclusion instead of manufacturing equal sides. Legacy
+    rows remain valid so append-only history and committed fixtures replay.
+    """
+    if not isinstance(agent_case, dict):
+        raise AnswerProvenanceError("agent_case must be an object")
+    fields = set(agent_case)
+    entries = []
+    if fields == LEGACY_CASE_FIELDS:
+        sections = ((section, agent_case[section]) for section in ("for", "against"))
+    elif (POSITIVE_CASE_REQUIRED <= fields
+          and fields <= POSITIVE_CASE_REQUIRED | POSITIVE_CASE_OPTIONAL):
+        recommendation = agent_case.get("recommendation")
+        if not isinstance(recommendation, dict):
+            raise AnswerProvenanceError("agent_case.recommendation must be a claim object")
+        entries.append(("recommendation", 0, recommendation))
+        sections = (("support", agent_case.get("support")),
+                    ("counter_case", agent_case.get("counter_case", [])))
+    else:
+        raise AnswerProvenanceError(
+            "agent_case must use recommendation/support/counter_case, or the legacy "
+            "for/against shape")
+
+    for section, claims in sections:
+        if not isinstance(claims, list):
+            raise AnswerProvenanceError(f"agent_case.{section} must be a list")
+        if section in {"for", "against", "support"} and not claims:
+            raise AnswerProvenanceError(
+                f"agent_case.{section} must be a non-empty list of claims")
+        for index, claim in enumerate(claims):
+            entries.append((section, index, claim))
+
+    return tuple(entries)
+
+
 def validate_agent_case(agent_case, *, basis, consequence, rule_collisions=(), user_statements):
-    """Semantically validate a two-sided `--agent-case` payload against the
+    """Semantically validate a `--agent-case` payload against the
     frozen engine result it claims to describe. Returns None when the
     answer is provenance-clean; raises AnswerProvenanceError, naming the
     exact claim and rule, otherwise. See the module docstring for the full
     API contract, the design decisions behind each check, and what this
     function deliberately does not attempt."""
-    if not isinstance(agent_case, dict) or set(agent_case) != set(_SIDES):
-        raise AnswerProvenanceError("agent_case must be an object with exactly 'for' and 'against'")
     if not isinstance(basis, Mapping):
         raise AnswerProvenanceError("basis must be an object")
     if not isinstance(consequence, Mapping):
@@ -826,17 +869,14 @@ def validate_agent_case(agent_case, *, basis, consequence, rule_collisions=(), u
     record = build_record(basis, consequence, rule_collisions)
 
     resolved_anchors = []
-    for side in _SIDES:
-        claims = agent_case[side]
-        # Case 5: an empty side is refused -- the existing structural check
-        # (review._validate_agent_case) accepts a present-but-empty list,
-        # which is exactly the gap this module closes.
-        if not isinstance(claims, list) or not claims:
-            raise AnswerProvenanceError(f"agent_case.{side} must be a non-empty list of claims")
-        for index, claim in enumerate(claims):
-            resolved = _check_claim(claim, side, index, record, user_statements)
-            if resolved is not None:
-                resolved_anchors.append(resolved)
+    for section, index, claim in agent_case_claims(agent_case):
+        resolved = _check_claim(claim, section, index, record, user_statements)
+        if section == "recommendation" and claim.get("provenance") != "agent_judgment":
+            raise AnswerProvenanceError(
+                "agent_case.recommendation must be labelled agent_judgment; its support "
+                "carries the engine or public facts")
+        if resolved is not None:
+            resolved_anchors.append(resolved)
 
     _check_required_coverage(resolved_anchors,
                              required_coverage(basis, consequence, rule_collisions))
