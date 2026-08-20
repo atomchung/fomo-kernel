@@ -588,12 +588,20 @@ python3 tools/ux_receipt.py verify --session-id <evaluation_id> \
 {
   "challenge": {
     "must_state": [
-      {"topic": "basis", "value": "ledger", "anchor": "basis.source"},
+      {"topic": "basis", "value": "2026-08-14", "anchor": "basis.as_of"},
+      {"topic": "basis", "value": 0, "anchor": "basis.stale_days"},
       {"topic": "position", "value": 0.2731, "anchor": "consequence.after.weights.SYNTH"},
-      {"topic": "cash", "value": 8400.0, "anchor": "consequence.after.cash.balance"},
       {"topic": "rule_collision", "value": "new_breach", "anchor": "rule_collisions.rule-1.rule_effect",
        "detail": {"rule_id": "rule-1", "text": "One name never above a quarter of the book", "state": "would_breach", "worsens": null}},
       {"topic": "disclosure", "value": "cost_basis", "anchor": "consequence.disclosures.0"}
+    ],
+    "may_state": [
+      {"topic": "concentration", "value": 0.6104, "anchor": "consequence.after.top3"},
+      {"topic": "cash", "value": 8400.0, "anchor": "consequence.after.cash.balance"}
+    ],
+    "machine_state": [
+      {"topic": "state_version", "value": "pb-v1:4d81e0af5c62b7139ae04fc8d25b6301a97fe4bb08c53d7261af9e40cb32175d",
+       "anchor": "basis.state_version"}
     ],
     "rule_effects": [
       {"rule_id": "rule-1", "text": "One name never above a quarter of the book",
@@ -603,16 +611,16 @@ python3 tools/ux_receipt.py verify --session-id <evaluation_id> \
     ],
     "quote_verbatim": [{"field": "reason", "text": "Best setup I have seen this year."}],
     "unchecked": ["liquidity", "valuation", "tax", "position_fit", "evidence_delta"],
-    "case_required": {"for": 1, "against": 1},
+    "case_required": {"recommendation": 1, "support": 1, "counter_case": "when_material"},
     "required_coverage": [{"path": "consequence.disclosures.0", "owes": "disclosure", "key": "cost_basis"}]
   },
-  "presented_text": "On your recorded book this takes SYNTH to 27.3% and leaves 8,400 in cash. It would break your own rule: \"One name never above a quarter of the book\". Weights are on cost, not live prices. You said: \"Best setup I have seen this year.\" Liquidity, valuation, tax, whether the position still fits you, and whether this is genuinely new information were not checked.",
+  "presented_text": "Not at this size. It takes SYNTH to 27.3%, which crosses a line you wrote yourself: \"One name never above a quarter of the book\". You said: \"Best setup I have seen this year.\" What would change my mind is current prices — these weights are on cost. (Book as of 2026-08-14; weights on cost, not market value.)",
   "sector_display": {"before": "software and cloud", "after": "semiconductors"},
   "disclosures_display": {"cost_basis": "No current price was supplied, so these weights are computed on cost, not market value."}
 }
 ```
 
-Paste the challenge verbatim from stdout — a truncated paste is refused rather than read as a smaller obligation — and the recorded `challenge_hash` stays auditable afterward: the block is a pure function of the persisted evaluation row, so anyone holding the root can recompute it. `sector_display` is captured from that same stdout the same way, verbatim; it is required whenever the response carried one, and an empty `{}` is how you paste a response that named no largest sector — omitting the key entirely is refused, not read as nothing to check. `disclosures_display` (#739) is a real sibling field on the same stdout — the localized text for each `consequence.disclosures` key, e.g. `cost_basis` above — included here so the pasted check file matches the real response shape; unlike `sector_display`, it is not yet read or verified by this tool, so its presence or absence changes nothing about what `verify` decides.
+Paste the challenge verbatim from stdout — a truncated paste is refused rather than read as a smaller obligation, and a `machine_state` value appearing in `presented_text` refuses the evidence outright (#830: those are for a mechanical comparison and are never shown to a person) — and the recorded `challenge_hash` stays auditable afterward: the block is a pure function of the persisted evaluation row, so anyone holding the root can recompute it. `sector_display` is captured from that same stdout the same way, verbatim; it is required whenever the response carried one, and an empty `{}` is how you paste a response that named no largest sector — omitting the key entirely is refused, not read as nothing to check. `disclosures_display` (#739) is a real sibling field on the same stdout — the localized text for each `consequence.disclosures` key, e.g. `cost_basis` above — included here so the pasted check file matches the real response shape; unlike `sector_display`, it is not yet read or verified by this tool, so its presence or absence changes nothing about what `verify` decides.
 
 What the machine half checks, and what stays with the owner's `comprehension` verdict: load-bearing numbers as digits at any display precision, and rule-collision texts / user quotes / excluded-holding tickers verbatim, are machine-decidable; engine-vocabulary strings, boolean triggers, and `unchecked` keys reach the user only as prose in the conversation's language, which no offline comparison can judge — that half is what `comprehension` is for. Whether the answer named the sector in `sector_display`'s own words, rather than in the engine's raw internal label, is also machine-decidable (#767) and never depends on which language the answer used. See `references/ux-receipt.md` ("The second card-free route") for the complete split.
 

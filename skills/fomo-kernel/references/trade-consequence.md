@@ -264,19 +264,76 @@ that drops a required rule collision still fails.
 | Key | What it is |
 |---|---|
 | `must_state` | Ordered owed facts, each `{topic, value}` plus `anchor` when the fact is addressable. The trailing two topics name holdings: `excluded_holding` for what fell out of the book entirely, `out_of_scope` for what stayed in it with its composition unread. |
+| `may_state` | Computed and owed on no call (#830): the concentration family and cash. State one when this decision turns on it. |
+| `machine_state` | Anchors for machines. Never rendered, in any register. |
 | `rule_effects` | The product-safe projection of what this trade does to each of the user's own rules: `effect`, the `limit` it was judged against and its `limit_source`, and the `must_convey` / `must_not_convey` slots. Empty when no rule speaks. See [Reading a rule collision](#reading-a-rule-collision). |
 | `quote_verbatim` | The user's own words, to be reproduced rather than summarized. Empty when no `--decision-context` was supplied. |
-| `unchecked` | Research dimensions the engine did not look at. Surface only those material to this recommendation. |
+| `unchecked` | Research dimensions the engine did not look at. An availability list the answer never enumerates; a material gap earns one end-block line. |
 | `case_required` | The preferred positive case: one recommendation, at least one supporting claim, and a counter-case when material. |
 | `required_coverage` | The mechanically enforced subset — what an `--agent-case` submission is *refused* for leaving out. |
 
-`must_state` entries are facts, not sentences. Several belong in one sentence: the `basis` and `price_basis` entries are one clause — *"computed on your recorded book as of the 20th, nine days old and never reconciled against a broker view, priced at Tuesday's closes"* — not a bullet each. The order is the order the facts depend on each other (the basis first because every number after it is measured against that book, the price session next because those numbers are measured at one, the disclosures last because they qualify what precedes them), not a script to read aloud. `basis.state_version` is the exception worth naming: it is the book's exact identity, present so a QA run can compare what the user saw against the frozen payload mechanically. Carry it, but do not recite a hash at someone mid-decision — *"this is your book as of the 20th"* is the same fact in the register the rest of the answer is in.
+### What "state" means
+
+**Stated = the fact appears with its correct anchor.** An inline number, a
+table cell, and a line in the answer's end block all qualify; so does a clause
+that carries two or three facts at once. What does not qualify is a number
+whose denominator, unit, or session has been left behind, because that is a
+different fact wearing the same digits.
+
+Fifteen obligations are not fifteen sentences, and the difference is the whole
+reason this block lists *facts*. The `basis` and `price_basis` entries are one
+clause — *"on your book as of the 20th, priced at Tuesday's closes"* — not a
+bullet each. `must_state`'s order is the order the facts depend on each other
+(the basis first because every number after it is measured against that book,
+the price session next because those numbers are measured at one, the
+disclosures last because they qualify what precedes them). It is a dependency
+order and never a reading order: [the answer's own order](#answer-shape) is the
+reader's question chain, and the fact that decides the call opens it.
+
+### The three lists, and why each fact is on the one it is on (#830)
+
+Owner ruling, 2026-08-20. The block used to be one list of roughly fifteen owed
+facts, and an obligation list has one cheapest discharge: a sentence per item.
+The audit asked, of each entry, what its must-have reason was, and deleted the
+ones that had none — starting with `basis.state_version`, a content hash that
+had been sitting on the list of facts a human answer owes.
+
+**Kept, with the reason each keep is a keep:**
+
+| Kept | Why it may not be dropped |
+|---|---|
+| Stance and the deciding reason (`case_required`) | It is the product's point. An answer without it is a briefing, not a decision. |
+| Every non-empty `rule_effects` entry | Silence about a line the user wrote themselves is help breaking it. Owner-live incident, 2026-08-02. |
+| The one or two consequence numbers that would flip *this* decision | That is the answer, not a disclosure. |
+| A falsifier on any directional recommendation | The one element the owner singled out as praise in the #827 blind A/B. |
+| "Recorded a consideration, not executed", when a canonical write happened | The user cannot see the difference from where they sit, and the difference is real money. |
+| Source and as-of on a public fact, compact and inline | A looked-up fact with no provenance is indistinguishable from an invented one (C2). |
+| One warning line when pricing is degraded | Cost weights can invert which position is the largest — the fixture evidence in [freeform-answers.md](freeform-answers.md). |
+
+**Deleted, and what replaced each:**
+
+| Deleted | What it is now |
+|---|---|
+| `basis.state_version` in the answer | `machine_state`. Never rendered; *"this is your book as of the 20th"* is the same fact in the register the rest of the answer is in. |
+| The basis four-piece recital every answer | Two facts, `as_of` and `stale_days`, and staleness is *said* only when it could change the decision. Otherwise it is one end-block line. |
+| The concentration family every answer | `may_state`. It surfaces when it is the deciding fact or when it touches the user's own cap — and the second case is not judgment, because `rule_effects` carries it and `required_coverage` enforces it. |
+| Cash balance and weight every answer | `may_state`. State it when cash is the question or a floor is being crossed. |
+| Enumerating `unchecked` | Nothing. A material gap earns one end-block line; four lines saying nothing was measured is the purest form of discharging a list. |
+| A standalone counter-case section | The falsifier line. `counter_case: when_material` stays in the payload; it stops becoming a section. |
+| Basis and caliber narrated in the body *and* the footer | One compact end block. `disclosures_display` lines land there. |
+
+The data layer did not shrink. Every number is still computed, still anchored,
+still citable, and the user can ask for any of it — which is what makes not
+saying a number this decision does not turn on different from hiding it. What
+moved to judgment is *selection*, and the named risk is omitting a consequence
+that mattered; the two silences that could help a user break their own rule are
+the two that stayed machine-enforced.
 
 `price_basis` is present only on a priced answer, and is normally one entry: the frame date every number came from. A per-instrument entry appears beside it only where that instrument's own session differs from the frame, and it carries the ticker in `detail` — say that one aloud, because it is the case a single date would have hidden. An unpriced answer carries no `price_basis` entry at all; the `cost_basis` disclosure is what speaks for it there.
 
 `anchor` is present on most entries and absent on a few. A dot-separated path cannot address a ticker that itself contains a dot, so `2330.TW`'s own weight arrives with its value and no `anchor`: the fact is still owed and still stated, it simply cannot be cited by path. Every anchor that *is* offered has already been resolved against the frozen record, so an anchor from this block is always one the case validator accepts.
 
-`unchecked` names available research dimensions the engine never went near — distinct from `disclosures`, which are gaps in numbers it did compute. It is an availability list, not a recital quota. State an unchecked dimension when it could change the recommendation or when the wording would otherwise imply it was checked; omit irrelevant dimensions.
+`unchecked` names available research dimensions the engine never went near — distinct from `disclosures`, which are gaps in numbers it did compute. It is an availability list the answer **never enumerates**. One of these earns one end-block line when it could change the recommendation, or when the answer's own wording would otherwise imply it was checked; the rest stay silent. In the #827 A/B the same *"I did not check valuation"* appeared twice in one answer, which is what a recital quota produces when the model is trying to be honest.
 
 | Key | What it means |
 |---|---|
@@ -303,9 +360,21 @@ voice through the [output-voice contract](../../../docs/output-voice.md)
 C1–C4. Those own how this answer speaks; this section owns only the `consider`
 route's salience facts and answer slots.
 
-The challenge block is the factual floor. The route slots below select the
-decision-relevant facts without turning unchecked dimensions into mandatory
-disclaimer copy.
+The challenge block is the factual floor. The shape below selects the
+decision-relevant facts without turning available ones into standing copy.
+
+<a id="answer-shape"></a>
+### The reader's question chain
+
+Arrange the answer in the order the reader would ask it, never in the payload's
+field order:
+
+**what you asked → the answer → why → what would overturn it → what you'd do.**
+
+That is one storyline, which is V4's one lead tension applied to the whole
+answer rather than only to its opening. Payload order is a dependency order
+computed for a machine; reading it aloud is how an answer comes to open on the
+book's provenance and reach the recommendation in its last paragraph.
 
 ### Lead selection
 
@@ -321,24 +390,30 @@ Special cases: `improved_but_still_over` and `resolved_existing_breach` are impr
 ### Answer slots
 
 Default to one compact recommendation body. There is no word-count target or
-mandatory paragraph count.
+mandatory paragraph count — and no obligation to say a fact because it exists.
 
-- **Paragraph 1 — answer first:** the lead, its key engine support, and any
-  *truth-critical* qualifier (D2) without which one of its own numbers would be
-  misread.
-- **Material counter-case:** include the strongest objection only when it could
-  change the recommended action, plus the user's exact `reason` / `why_now`
-  where owed.
+- **Opening body:** the stance, the reason that decides it, the one or two
+  numbers that would flip it, and any *truth-critical* qualifier (D2) without
+  which one of those numbers would be misread. Every non-empty `rule_effects`
+  entry belongs here too; it is never traded away for brevity.
+- **The falsifier:** what would change your mind, attached to any directional
+  call. That is where the counter-side lives. A standalone counter-case
+  section is what `counter_case: when_material` produced every time, and it
+  stops being one.
+- **One end block:** sources and as-of, which book, which market session, a
+  degraded price, and at most the material gaps that could change this
+  recommendation. One line each, non-narrative, collected once.
+  `disclosures_display` sentences are material for this block.
 
-Place any remaining material limitations where they make the answer easiest to
-understand ([expression contract](../../../docs/expression-contract.md) D1–D6).
-Nothing that already rode a body sentence as a truth-critical qualifier repeats
-elsewhere (D6). This freedom is never a discount on the factual floor: every
-`must_state` entry is still owed.
+Nothing appears on two floors (D6/D7): a qualifier that rode a body sentence is
+finished, and a caliber line in the end block is not also narrated above it.
+This freedom is never a discount on the factual floor: every `must_state` entry
+is still owed, and every `may_state` entry is still there to reach for the
+moment the decision turns on it.
 
-### One payload, two renderings
+### One payload, three renderings
 
-A fictional book, run through the real engine: six US holdings at $100,000 total cost, NVDA at 30%, three semiconductor names summing to 60% `ai_pct`; the premise buys 100 more NVDA at $127.50 — below cost, dated after the book's last row — with `reason` *"NVDA is still my highest-conviction name in the book."* and `why_now` *"It dropped hard this week and the discount feels too good to pass up."* The engine returns: NVDA 30% → 37.9%, `ai_pct` 60% → 64.5%, `oversize_triggered` already true *before* the trade, cash running to −$112,750 with `cash_unreliable`, a 45-day-stale unverified cost-basis record, and `unclassified_book` naming three holdings. Seventeen owed facts, five unchecked items, no rule collision on file. Both renderings below are complete against that challenge. They are witnesses to the shape, not reference answers or test oracles.
+A fictional book, run through the real engine: six US holdings at $100,000 total cost, NVDA at 30%, three semiconductor names summing to 60% `ai_pct`; the premise buys 100 more NVDA at $127.50 — below cost, dated after the book's last row — with `reason` *"NVDA is still my highest-conviction name in the book."* and `why_now` *"It dropped hard this week and the discount feels too good to pass up."* The engine returns: NVDA 30% → 37.9%, `ai_pct` 60% → 64.5%, `oversize_triggered` already true *before* the trade, cash running to −$112,750 with `cash_unreliable`, a 45-day-stale unverified cost-basis record, and `unclassified_book` naming three holdings. Under the pre-#830 block that was seventeen owed facts and five unchecked items; under the current one it is nine owed, six available, one never rendered, and the unchecked list is not a recital at all. No rule collision is on file. All three renderings below are complete against the floor. They are witnesses to the shape, not reference answers or test oracles.
 
 **Complete but flat — every fact true and anchored, no judgment, no shape:**
 
@@ -346,7 +421,7 @@ A fictional book, run through the real engine: six US holdings at $100,000 total
 
 Every number is anchored and every owed fact is present, and it fails on both axes this section governs. On judgment: the for-side states what the user already knows, the against-side is the disclosure list wearing a new heading and never touches the for-side, and nothing says what the decision actually trades off. On expression: there is no body/block split at all — the limitations are inline sentences in the same list as the numbers, which is D1's wall of per-number interruptions in its purest form.
 
-**Decision-first recommendation — same payload, same floor:**
+**Decision-first, whitelist era — same payload, every owed fact discharged:**
 
 > Do not add NVDA at this size. Priced on cost rather than on current market value, NVDA goes from 30% to about 38% and semiconductors as a group from 60% to about 65% — and that 65% is measured over the classified part of the book, which excludes JNJ, PG and KO. The position-size line was already triggered before this trade, so this widens an existing breach rather than creating one.
 >
@@ -357,6 +432,18 @@ Every number is anchored and every owed fact is present, and it fails on both ax
 The factual floor is identical — same numbers, disclosures, and verbatim quotes. The unchecked list is filtered by materiality. One lead is chosen, and any counter-case directly attacks its support rather than satisfying symmetry.
 
 What changed on expression, and which rule decides each: the cost-versus-market basis and the incomplete classification denominator stay in the body, because they are the *unit* and the *denominator* of the numbers in that sentence (D2) — without them those percentages refer to something else. Staleness and cash reliability are collected because both materially qualify confidence in the recommendation. No marker, tail position, or numeric cap decides that placement (D1/D3/D5), and nothing appears twice (D6).
+
+**Same payload, after the deletion (#830):**
+
+> Do not add NVDA at this size — the position-size line was already over before this trade, so this widens a breach rather than opening one. On cost rather than market value it goes from 30% to about 38%.
+>
+> What would change my mind: market-value weights. These are cost weights, and if this week's drop hit your semiconductor names hardest, the real concentration could be lower than the record shows. Your own words — "it dropped hard this week and the discount feels too good to pass up" — describe a price move, not new business evidence; that is my read, not an engine fact. Hand me current closes and I will re-run it.
+>
+> (Book 2026-06-15, 45 days old, never reconciled; weights on cost; the cash line is an unanchored running sum, not a real overdraft; sector shares exclude JNJ, PG and KO. Nothing has been executed.)
+
+Three paragraphs where the second rendering has three and the first has one wall, and the difference is not compression. The second rendering states the AI/sector concentration, the cash number, and the classification denominator in body prose because the whitelist owed all three; here the concentration family and the cash balance are `may_state`, so the answer reaches for them only where they carry the argument — the sector figure is gone because nothing about the recommendation turns on it, and the cash line survives only as the end-block caveat that stops a −$112,750 from reading as a real overdraft. The counter-case became the falsifier, which is the same content with a decision attached to it. Every caliber line moved to the end block and appears once. `basis.state_version` appears nowhere, in any of the three.
+
+The floor did not move: the same rule effect, the same verbatim quote, the same disclosures. Ask *"what were the other numbers?"* and every one of them is still there.
 
 ## The recommendation case
 
@@ -401,7 +488,11 @@ A rejected case is refused before it is stored or shown: the caller gets the val
 
 ## Recording what the user did
 
-Persistent calls are recorded in a local, append-only log. Candidate fan-out uses `--ephemeral`, which computes against the existing recorded book and writes no evaluation; rerun only the selected or live candidate without the flag. Once the user has decided, tell the engine with `--resolve`:
+Persistent calls are recorded in a local, append-only log. Candidate fan-out uses `--ephemeral`, which computes against the existing recorded book and writes no evaluation; rerun only the selected or live candidate without the flag.
+
+**When a persistent call happens, say once that the record is a consideration and not an execution.** This is one of the answer's keeps, and it is owed exactly when a canonical write occurred — never on an `--ephemeral` fan-out, which recorded nothing to be confused about. The user cannot see the difference between "stored what you were weighing" and "placed the order" from where they sit, and the difference is real money.
+
+Once the user has decided, tell the engine with `--resolve`:
 
 ```bash
 python3 engine/review.py consider --resolve <evaluation_id> --decision acted

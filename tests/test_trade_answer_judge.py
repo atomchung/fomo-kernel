@@ -60,10 +60,13 @@ def candidate_payload(judge, fixture, *, answer_id="current-output",
                  "below 25% of the recorded book.")
     consequence = ("The add also puts top-three concentration at 63.5%, classified AI and "
                    "maximum-sector exposure at 27%, and cash at $10,410.96 or 8.6758%.")
+    # The two basis obligations `must_state` still carries after #830 -- the
+    # day the book was true and how old that makes it. It used to name
+    # `completeness` as well, which left the floor with the four-piece recital.
     limitation = (
-        "This is a declared-complete recorded snapshot rather than a live broker view, "
-        "so liquidity, valuation, tax, broader position fit, and whether the evidence "
-        "actually changed remain unchecked."
+        "This recorded snapshot is current only to the day it names rather than to a live "
+        "broker view, so liquidity, valuation, tax, broader position fit, and whether the "
+        "evidence actually changed remain unchecked."
     )
     resolution = (
         "Your call: keep it open, decline it, or modify the size; nothing has been executed."
@@ -145,7 +148,7 @@ def candidate_payload(judge, fixture, *, answer_id="current-output",
     add("separator", " ")
     add("limitation", limitation,
         obligation_refs=[
-            "must_state[0]", "must_state[3]",
+            "must_state[0]", "must_state[1]",
             *[f"unchecked.{key}" for key in challenge["unchecked"]],
         ])
     add("separator", "\n\n")
@@ -184,10 +187,28 @@ def test_bank_has_real_gate_and_orthogonal_witnesses():
         "lead_then_caveat_padding": ["caveat_discipline"],
         "all_axes_pass_compact": [],
         "all_axes_pass_expanded": [],
+        # #830. Two witnesses for the deletion, on one axis and one gate.
+        # `discharges_every_available_fact` states every reading the payload
+        # offers, including the whole `may_state` family and all five
+        # unchecked dimensions, and reaches its stance in the last sentence:
+        # complete, eligible, and the failure the owner audit was called on.
+        # `deletion_first_compact` is the same call under the new floor and
+        # passes every axis while never mentioning concentration or cash.
+        "discharges_every_available_fact": ["decision_focus"],
+        "deletion_first_compact": [],
     }
     eligible = {answer["id"]: answer for answer in judge.eligible_answers(fixture)}
     assert {key: value.get("judge_fails", []) for key, value in eligible.items()} == expected
     assert "deterministic_reject_unsupported" not in eligible
+    # #830's fail-closed half: an answer that renders the book's content hash
+    # never reaches a model. The gate is the production delivery check, not a
+    # fixture label -- `test_fixture_expectation_never_decides_production_
+    # eligibility` above holds that distinction for the bank as a whole.
+    assert "renders_the_book_hash" not in eligible
+    leak = judge.deterministic_eligibility(
+        fixture, next(answer for answer in fixture["answers"]
+                      if answer["id"] == "renders_the_book_hash"))
+    assert leak.eligible is False and "machine anchor" in leak.reason, leak.reason
     assert "eligible_for_judge" not in json.dumps(fixture)
 
 
@@ -667,16 +688,20 @@ def test_live_runner_records_per_axis_evidence_before_passing():
             fixtures, backend="stub", model="stub", sample_one=sample,
             append_receipt=lambda row: receipts.append(row) or pathlib.Path("/tmp/receipt"),
         )
+    # Eight eligible witnesses since #830 added the deletion pair; the two
+    # ineligible ones (an unsupported case, a rendered machine anchor) never
+    # reach a model at all.
+    judged = len(judge.eligible_answers(fixtures[0]))
     assert rc == 0
-    assert len(calls) == 6 * judge.BASE.RUNS
+    assert len(calls) == judged * judge.BASE.RUNS
     receipt = receipts[0]
     assert receipt["status"] == "pass"
     assert receipt["calibration"]["state"] == "uncalibrated"
     assert receipt["judge_contract_digest"] == judge.judge_contract_digest()
-    assert receipt["judged_answer_count"] == 6
+    assert receipt["judged_answer_count"] == judged
     assert receipt["run_kind"] == "fixture_witness"
     assert receipt["axis_summary"]["decision_focus"]["counts"] == {
-        "agreement": 6, "disagreement": 0, "ambiguous": 0, "total": 6}
+        "agreement": judged, "disagreement": 0, "ambiguous": 0, "total": judged}
     accepted = next(row for row in receipt["answers"]
                     if row["answer_id"] == "buried_but_synthesized")
     axis = accepted["report"]["axes"]["decision_focus"]

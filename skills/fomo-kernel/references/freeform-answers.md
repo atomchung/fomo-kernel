@@ -158,18 +158,28 @@ calculate, interpolate, or silently widen them.
 
 ## Rule 4 — limitations follow relevance, not a template
 
-Use [expression-contract.md](../../../docs/expression-contract.md) D1–D6 for
+Use [expression-contract.md](../../../docs/expression-contract.md) D1–D7 for
 every limitation. Keep truth-critical denominator, unit, or pricing-set
 qualifiers inline. Include other limitations only when they materially qualify
-the answer, and place them where they are clearest; no marker, tail block, or
-numeric line cap is required.
+the answer; no marker or numeric line cap is required.
 
-Two consequences worth stating in this file's own terms, because this is the
+Since #830, *where* they go is a rule rather than a free choice. A fact lives
+on exactly one floor (D7): the facts that decide the call open the body, a
+truth-critical qualifier stays beside its number, and everything else material
+— sources and as-of, which book, which session, a degraded price, a gap that
+could change the recommendation — collects into **one compact end block, one
+line each, non-narrative**. Nothing is said in the body and again below it.
+
+Three consequences worth stating in this file's own terms, because this is the
 surface where they were being got wrong:
 
 - **A short answer is not an honest one by virtue of being short.** Text-first
   is a default, not a ceiling on what an answer *produces* or which facts it
   *owes*.
+- **A complete answer is not a useful one by virtue of being complete.** An
+  obligation list has one cheapest discharge — a sentence per item — and a
+  correct answer nobody finishes reading has taxed its own correctness away.
+  Say what this decision needs.
 - **Nothing material means no disclaimer.** An answer with no material
   limitation ends at its last judgment. A standing "as always, this
   is not advice" tail is a manufactured disclosure (D4), which is the same
@@ -180,6 +190,11 @@ denominator, a weight priced on cost, a value stated in one currency while
 its weight is measured in another — it stays in that sentence and does **not**
 repeat elsewhere (D2/D6). That is the same rule `trade-consequence.md`
 already applies to `partial_book`, now stated once for every surface.
+
+**Machine anchors are never rendered.** A content hash, a state version, or
+validator detail belongs to the payload; there is no register in which a
+person wants one. `tests/agent/check_expression.py`'s E-6 and the `consider`
+receipt's delivery evidence both fail an answer that carries one.
 
 ## What this does not cover
 
@@ -195,7 +210,9 @@ line count. The review card's footnote remains that surface's own layout.
 **Obligation selection is still per-route.** What the card owes comes from
 `build_honesty_ledger()`; what a `consider` answer owes comes from its
 `challenge` block (`trade-consequence.md`, "What the answer owes"), computed
-per call. Every *other* ad hoc question in this file's opening paragraph —
+per call — and since #830 that block separates what an answer owes from what
+it merely *has*, so "available in the payload" is no longer a reason to say
+something. Every *other* ad hoc question in this file's opening paragraph —
 "what's my portfolio worth", "how much cash do I have" — has no engine-computed
 obligation list of its own, and #823 did not build one. Those answers inherit
 the placement rules above and select their own disclosures from what the engine

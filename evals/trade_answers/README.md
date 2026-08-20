@@ -176,3 +176,27 @@ an uncalibrated `PASS` without its trust boundary.
 Add a new failure shape only after an observed product miss cannot be diagnosed
 by the existing orthogonal witnesses. A passing answer shows that the named
 invariants can coexist; it is not a reference answer or wording template.
+
+### The #830 pair
+
+`discharges_every_available_fact` and `deletion_first_compact` were added for
+the deletion-first ruling, and they are one witness read from both ends of the
+same frozen call.
+
+The first states every reading the payload offers — the whole `may_state`
+family, all five unchecked dimensions, the basis — and arrives at its stance in
+the last sentence. It is deterministically eligible and factually complete, and
+it is the answer the owner could not finish reading. That is the point: **no
+deterministic gate here can fail it.** Completeness is exactly what the
+production checks measure, so bloat is only visible on `decision_focus`, and
+the witness exists so a green suite cannot be read as a governed output.
+
+The second is the same call under the shrunken floor: it never mentions
+concentration or cash, opens on the stance, and still clears every production
+gate — which is the mechanical half of the claim that the deletion took
+obligations and not facts. Before #830 it would have failed the delivery check
+for omitting the concentration and cash digits.
+
+`renders_the_book_hash` is the fail-closed third: an answer that pastes
+`basis.state_version` is refused by the delivery check and never reaches a
+model. Its `judge_fails` is empty because no axis ever grades it.
