@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Check C4 of the conversational expression contract (offline,
-deterministic).
+"""Check C4 and D7's machine-anchor floor of the conversational expression
+contract (offline, deterministic).
 
 Issue #825 retired E-1 through E-4. They classified block position, a literal
 prefix, line count, and exact-string repetition; none could tell whether a
 limitation mattered or where it read clearly. E-5 remains because leaking an
 engine payload token is an exact, deterministic product defect.
+
+E-6 (#830) is the second such defect: rendering a machine anchor. D7 says a
+fact lives on exactly one floor, and the bottom floor is "payload only,
+never rendered" — `basis.state_version`, a content hash whose only reader is
+a mechanical QA comparison. E-6 is the half of D7 a regex can honestly
+decide; where the disclosure lands when it *is* owed remains a judgment D1
+and D2 govern.
 
 The token blacklist for E-5 is READ FROM THE SCHEMAS, never transcribed here.
 `skills/fomo-kernel/schemas/*.schema.json` already enumerate the engine's own
@@ -45,8 +52,20 @@ _TOKEN_SCHEMAS = ("evaluation-challenge.schema.json", "trade-evaluation.schema.j
 # loosening the pattern, so the exemption is visible and reviewable.
 _TOKEN_EXEMPT = frozenset({"as_of"})
 
+# E-6's machine anchor, matched by SHAPE rather than by vocabulary — the one
+# place this file deliberately does not read the schemas. A state version is
+# `pb-v1:<sha256>` from `portfolio_basis.STATE_VERSION_PREFIX`, or
+# `csv-v1:<sha256>` on the CSV-compatibility path, and a future anchor will
+# have its own prefix; what none of them will stop being is a long run of hex.
+# Deriving the prefixes would mean importing the engine, which this checker
+# stays free of on purpose, and would go stale on the next prefix. A
+# conversational answer about a trade contains no thirty-two-character hex run
+# in any language, so the shape is exact enough to fail closed on and loose
+# enough to survive a rename.
+_MACHINE_ANCHOR = re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{32,}(?![0-9a-fA-F])")
 
-ASSERTIONS = ("E-5",)
+
+ASSERTIONS = ("E-5", "E-6")
 
 
 @dataclass
@@ -106,10 +125,17 @@ def _e5_no_internal_tokens(text: str, tokens) -> Finding:
                    "" if not hits else "engine vocabulary in the answer: " + ", ".join(hits[:5]))
 
 
+def _e6_no_machine_anchor(text: str) -> Finding:
+    label = "D7: no machine anchor is rendered to the user"
+    hits = _MACHINE_ANCHOR.findall(text)
+    return Finding("E-6", not hits, label,
+                   "" if not hits else "machine anchor in the answer: " + hits[0][:16] + "…")
+
+
 def check_expression(text: str, tokens=None) -> list:
-    """The deterministic expression assertion against one answer."""
+    """The deterministic expression assertions against one answer."""
     tokens = internal_tokens() if tokens is None else tokens
-    return [_e5_no_internal_tokens(text, tokens)]
+    return [_e5_no_internal_tokens(text, tokens), _e6_no_machine_anchor(text)]
 
 
 # ─────────────────────────── witness fixture ───────────────────────────

@@ -253,6 +253,14 @@ def _anchored(challenge, topic=None):
             if "anchor" in e and (topic is None or e["topic"] == topic)]
 
 
+def _may_anchored(challenge, topic=None):
+    """The same read against `may_state` (#830). An available fact is as
+    citable as an owed one -- the deletion was of the obligation to say it,
+    never of the ability to."""
+    return [e for e in challenge["may_state"]
+            if "anchor" in e and (topic is None or e["topic"] == topic)]
+
+
 def _topics(challenge):
     return [e["topic"] for e in challenge["must_state"]]
 
@@ -605,9 +613,9 @@ def test_an_unclassified_book_states_no_driver_concentration():
     consequence["after"].update({"ai_pct": 0.0, "max_sector_pct": 0, "max_sector": None})
     consequence["disclosures"] = ["unmapped_driver"]
     challenge = _build(consequence=consequence)
-    stated = {e["anchor"] for e in _anchored(challenge, "concentration")}
+    stated = {e["anchor"] for e in _may_anchored(challenge, "concentration")}
     assert "consequence.after.top3" in stated, (
-        "top3 is pure weight and needs no classification; it is still owed")
+        "top3 is pure weight and needs no classification; it is still offered")
     assert "consequence.after.ai_pct" not in stated
     assert "consequence.after.max_sector_pct" not in stated
     # ... and the disclosure that explains the absence is still required.
@@ -621,7 +629,7 @@ def test_a_real_zero_beside_a_classified_sector_is_still_stated():
     consequence = _consequence()
     consequence["after"].update({"ai_pct": 0.0, "max_sector_pct": 0.45,
                                  "max_sector": "Industrials"})
-    stated = {e["anchor"] for e in _anchored(_build(consequence=consequence), "concentration")}
+    stated = {e["anchor"] for e in _may_anchored(_build(consequence=consequence), "concentration")}
     assert "consequence.after.ai_pct" in stated, (
         "0% AI on a classified book is a measurement, not an absence")
     assert "consequence.after.max_sector_pct" in stated
@@ -634,19 +642,131 @@ def test_an_ai_reading_survives_a_book_with_no_classified_sector():
     reading on the book."""
     consequence = _consequence()
     consequence["after"].update({"ai_pct": 0.52, "max_sector_pct": 0, "max_sector": None})
-    stated = {e["anchor"] for e in _anchored(_build(consequence=consequence), "concentration")}
+    stated = {e["anchor"] for e in _may_anchored(_build(consequence=consequence), "concentration")}
     assert "consequence.after.ai_pct" in stated
     assert "consequence.after.max_sector_pct" not in stated
 
 
 def test_a_false_trigger_is_not_stated_as_a_fact():
     """A flag that is false is the absence of a fact. Listing it would pad
-    the floor with non-events, which is how a floor stops being read."""
+    the list with non-events, which is how a list stops being read."""
     consequence = _consequence()
     consequence["after"]["oversize_triggered"] = False
     consequence["after"]["concentration_triggered"] = False
     challenge = _build(consequence=consequence)
-    assert not [e for e in challenge["must_state"] if e["value"] is False]
+    for key in ("must_state", "may_state", "machine_state"):
+        assert not [e for e in challenge[key] if e["value"] is False], key
+
+
+# ─────────── 4b. the deletion: three lists, three standings (#830) ───────────
+#
+# Owner ruling, 2026-08-20: audit the obligation inventory and delete
+# anything whose must-have reason cannot be stated. These tests pin what
+# survived the audit, what only moved, and what may never be rendered --
+# because "the answer got shorter" is not evidence that the right thing was
+# cut, and the named risk of the deletion is omitting a consequence that
+# mattered.
+
+def test_the_book_identity_is_a_machine_anchor_and_never_an_owed_fact():
+    """Exhibit A of the audit: a content hash sitting on the list of facts a
+    human answer owes. It keeps its address, because a QA run really does
+    compare it -- and it stops being described as content with a reader."""
+    challenge = _build()
+    owed = {e.get("anchor") for e in challenge["must_state"]}
+    assert "basis.state_version" not in owed, (
+        "a sha256 is not a fact anyone is owed mid-decision")
+    machine = challenge["machine_state"]
+    assert [(e["topic"], e["anchor"]) for e in machine] == [
+        ("state_version", "basis.state_version")], machine
+    assert machine[0]["value"] == _basis()["state_version"]
+
+
+def test_the_basis_recital_is_the_date_and_its_age_and_nothing_else():
+    """The four-piece recital is gone. What a person can act on is the day
+    the book was true and how old that makes it; where it came from and
+    whether it was reconciled stay on the frozen row for the gate that
+    still reads them."""
+    basis_entries = [e for e in _build()["must_state"] if e["topic"] == "basis"]
+    assert [e["anchor"] for e in basis_entries] == ["basis.as_of", "basis.stale_days"], (
+        f"the basis topic states {[e['anchor'] for e in basis_entries]}")
+
+
+def test_concentration_and_cash_are_offered_rather_than_owed():
+    """The families the owner's 「第一大段完全沒有意義」 verdict landed on. They
+    are computed, addressed and citable -- and no answer owes one until this
+    decision turns on it."""
+    challenge = _build()
+    owed_topics = {e["topic"] for e in challenge["must_state"]}
+    assert not owed_topics & set(evaluation_challenge.MAY_STATE_TOPICS), owed_topics
+    offered = {e["anchor"] for e in _may_anchored(challenge)}
+    # `max_sector_pct` is absent here for the reason `_measured` gives, not
+    # for #830's: this fixture carries no `max_sector`, so the reading is the
+    # zero that means nobody looked. Everything the engine really measured is
+    # still here.
+    for anchor in ("consequence.after.top3", "consequence.after.ai_pct",
+                   "consequence.after.cash.balance", "consequence.after.cash.weight"):
+        assert anchor in offered, f"{anchor} stopped being computed rather than stopping being owed"
+    assert [e["value"] for e in challenge["may_state"]
+            if e.get("anchor", "").endswith("_triggered")] == [True, True], (
+        "the two triggers that are on are still offered; a system default becomes a may-state, "
+        "not a deletion")
+
+
+def test_the_users_own_rule_survives_the_deletion_with_its_gate_intact():
+    """The one keep that may never become judgment. #830 moved the engine's
+    default concentration threshold to may-state; a line the USER wrote is
+    still named, still projected, and still refused-for-dropping."""
+    challenge = _build()
+    named = {e["detail"]["rule_id"] for e in challenge["must_state"]
+             if e["topic"] == "rule_collision"}
+    assert "rule-1" in named, "the collided user rule left the floor"
+    assert {row["rule_id"] for row in challenge["rule_effects"]} >= {"rule-1"}
+    assert "rule_collisions.rule-1" in {r["path"] for r in challenge["required_coverage"]}
+
+
+def test_a_stale_unreconciled_book_is_still_citable_after_the_recital_shrank():
+    """`completeness` left must_state, and it is one of the two conditions
+    that make `basis` a required citation. The obligation must still be
+    payable, or every case on an unreconciled book becomes unsubmittable --
+    the failure mode this file's section 1 exists for, reached from the
+    other side."""
+    basis = _basis(stale_days=0, completeness="unverified")
+    challenge = _build(basis=basis)
+    required = [r for r in challenge["required_coverage"] if r["owes"] == "basis"]
+    assert required and required[0]["key"] == "unverified", required
+    assert any(e["anchor"].startswith("basis.") for e in _anchored(challenge, "basis")), (
+        "the basis obligation names a debt with no way to pay it")
+
+
+def test_the_three_lists_never_state_the_same_fact_twice():
+    """One fact, one floor. An entry that appeared on two of these lists
+    would be the split failing to split anything -- and, downstream, the
+    same number said twice in one answer."""
+    challenge = _build(context=_context())
+    seen = {}
+    for key in ("must_state", "may_state", "machine_state"):
+        for entry in challenge[key]:
+            anchor = entry.get("anchor")
+            if anchor is None:
+                continue
+            assert anchor not in seen, f"{anchor} is on both {seen[anchor]} and {key}"
+            seen[anchor] = key
+
+
+def test_every_anchor_on_every_list_resolves_against_the_frozen_record():
+    """The anchor guarantee is a property of the block, not of one key in
+    it. A may_state or machine_state entry offering an anchor the validator
+    would reject is the same defect as an unresolvable must_state one."""
+    basis, consequence, collisions = _basis(), _consequence(), _rule_collisions()
+    challenge = _build(basis=basis, consequence=consequence, rule_collisions=collisions)
+    record = answer_provenance.build_record(basis, consequence, collisions)
+    for key in ("may_state", "machine_state"):
+        for entry in challenge[key]:
+            if "anchor" not in entry:
+                continue
+            resolved = answer_provenance.resolve_anchor(record, entry["anchor"])
+            assert resolved is not answer_provenance.UNRESOLVED, entry
+            assert resolved == entry["value"], entry
 
 
 def test_the_excluded_holding_is_named_not_merely_counted():
@@ -724,6 +844,25 @@ def test_module_vocabularies_match_the_schemas_enums():
     assert list(evaluation_challenge.TOPICS) == list(topics), (
         "evaluation_challenge.TOPICS and the schema's topic enum disagree; the enum is "
         "also the declared presentation order, so this must stay an ordered equality")
+
+    # #830's two new lists, held to the same rule. A vocabulary that moved
+    # from one key to another has two enums to keep honest, not one, and a
+    # topic published on the wrong list is invisible to every behavioral
+    # test above.
+    assert list(evaluation_challenge.MAY_STATE_TOPICS) == list(
+        schema["may_state"]["items"]["properties"]["topic"]["enum"])
+    assert list(evaluation_challenge.MACHINE_TOPICS) == list(
+        schema["machine_state"]["items"]["properties"]["topic"]["enum"])
+    families = (set(evaluation_challenge.TOPICS) | set(evaluation_challenge.MAY_STATE_TOPICS)
+                | set(evaluation_challenge.MACHINE_TOPICS))
+    assert len(families) == (len(evaluation_challenge.TOPICS)
+                             + len(evaluation_challenge.MAY_STATE_TOPICS)
+                             + len(evaluation_challenge.MACHINE_TOPICS)), (
+        "a topic on two lists at once makes 'is this owed' unanswerable")
+    assert set(_challenge_schema()["required"]) == set(_build()) == set(schema), (
+        "every emitted key is required and every required key is emitted; the block is computed "
+        "fresh per call and never stored, so an optional-but-always-present key would be a "
+        "declaration nothing means")
 
     unchecked = set(schema["unchecked"]["items"]["enum"])
     declared = set(evaluation_challenge.UNCHECKED_ALWAYS
