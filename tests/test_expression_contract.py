@@ -49,8 +49,13 @@ SURFACES = {
     REFERENCES / "weekly-market-read.md": "weekly market read",
 }
 
-DISCLOSURE_IDS = tuple(f"D{number}" for number in range(1, 7))
+DISCLOSURE_IDS = tuple(f"D{number}" for number in range(1, 8))
 CITATION_IDS = tuple(f"C{number}" for number in range(1, 5))
+# The rules whose table row must keep declaring that nothing mechanical
+# decides them. D7 is deliberately not on this list: its bottom floor -- a
+# machine anchor rendered at a person -- really is decided by E-6, and the
+# table names that oracle rather than claiming the whole rule is checked.
+INSTRUCTION_ONLY_IDS = tuple(f"D{number}" for number in range(1, 7)) + ("C3",)
 ROW_RE = re.compile(r"^\|\s*([DC]\d+)\s*\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|$", re.M)
 
 def _load_checker():
@@ -104,10 +109,20 @@ def test_unverified_rules_are_declared_unverified():
     coverage it lacks is the structural-gate failure this repository has
     shipped before."""
     rows = {row[0]: (row[2], row[3]) for row in _rows(CONTRACT.read_text(encoding="utf-8"))}
-    for rule_id in DISCLOSURE_IDS + ("C3",):
+    for rule_id in INSTRUCTION_ONLY_IDS:
         verification, oracle = rows[rule_id]
         assert verification == "instruction only", f"{rule_id} claims {verification!r}"
         assert oracle == "—", f"{rule_id} names oracle {oracle!r} for an unverified rule"
+    # The other direction, for the one D rule that does claim a mechanical
+    # half: a named oracle that stops existing is a claim of coverage this
+    # repository has shipped before, and it must not be checkable only by
+    # reading the table.
+    verification, oracle = rows["D7"]
+    assert verification != "instruction only" and oracle != "—", (
+        "D7 declares a mechanical half; the table must name which half and whose oracle")
+    assert "E-6" in oracle, oracle
+    assert "E-6" in _load_checker().ASSERTIONS, (
+        "the contract names E-6 as D7's oracle and the checker does not run it")
 
 
 # ───────────────────────── 2. every surface routes here ─────────────────────────
@@ -198,19 +213,30 @@ def _dense_challenge():
 
 # Ceilings for the topics whose size does not depend on the book. Each is the
 # count of fields that topic can ever emit, so a new one lands here loudly
-# instead of widening the floor unnoticed.
-FIXED_TOPIC_CEILINGS = {"basis": 5, "position": 4, "concentration": 5, "cash": 2}
+# instead of widening the floor unnoticed. `basis` fell from five to two in
+# #830 (the four-piece recital plus the hash became a date and its age), and
+# the two families that left `must_state` keep their ceilings on `may_state`
+# — an available list that grows unnoticed is the same defect one key over.
+FIXED_TOPIC_CEILINGS = {"basis": 2, "position": 4}
+FIXED_MAY_TOPIC_CEILINGS = {"concentration": 5, "cash": 2}
+FIXED_MACHINE_TOPIC_CEILINGS = {"state_version": 1}
+
+
+def _fixed_ceilings(challenge, key, ceilings):
+    counts = {}
+    for entry in challenge[key]:
+        counts[entry["topic"]] = counts.get(entry["topic"], 0) + 1
+    for topic, ceiling in ceilings.items():
+        assert counts.get(topic, 0) <= ceiling, (
+            f"{key}.{topic} emits {counts[topic]} entries against a declared ceiling of "
+            f"{ceiling}; a fixed-size topic that grew is how a list becomes a field table")
 
 
 def test_fixed_topics_stay_within_their_declared_ceiling():
     challenge = _dense_challenge()
-    counts = {}
-    for entry in challenge["must_state"]:
-        counts[entry["topic"]] = counts.get(entry["topic"], 0) + 1
-    for topic, ceiling in FIXED_TOPIC_CEILINGS.items():
-        assert counts.get(topic, 0) <= ceiling, (
-            f"{topic} emits {counts[topic]} entries against a declared ceiling of {ceiling}; "
-            "a fixed-size topic that grew is how the floor becomes a field table")
+    _fixed_ceilings(challenge, "must_state", FIXED_TOPIC_CEILINGS)
+    _fixed_ceilings(challenge, "may_state", FIXED_MAY_TOPIC_CEILINGS)
+    _fixed_ceilings(challenge, "machine_state", FIXED_MACHINE_TOPIC_CEILINGS)
 
 
 def test_no_owed_fact_is_a_duplicate_another_could_absorb():
@@ -221,20 +247,40 @@ def test_no_owed_fact_is_a_duplicate_another_could_absorb():
     which is exactly what the measured 39-field table was made of."""
     challenge = _dense_challenge()
     seen = set()
-    for entry in challenge["must_state"]:
-        key = (entry["topic"], entry.get("anchor"),
-               json.dumps(entry.get("detail"), sort_keys=True), str(entry["value"]))
-        assert key not in seen, f"must_state repeats a fact: {entry}"
-        seen.add(key)
+    for key in ("must_state", "may_state", "machine_state"):
+        for entry in challenge[key]:
+            fact = (entry["topic"], entry.get("anchor"),
+                    json.dumps(entry.get("detail"), sort_keys=True), str(entry["value"]))
+            assert fact not in seen, f"{key} repeats a fact: {entry}"
+            seen.add(fact)
+
+
+def test_the_owed_floor_stayed_smaller_than_the_whole_inventory():
+    """#830's structural claim, on the payload the audit was run against.
+    The block still computes everything; what shrank is the part an answer
+    is told it may not drop. A change that quietly moved a family back onto
+    the floor would leave every other test here green."""
+    challenge = _dense_challenge()
+    owed = {entry["topic"] for entry in challenge["must_state"]}
+    assert not owed & set(evaluation_challenge.MAY_STATE_TOPICS), (
+        f"an available family is back on the floor: {sorted(owed & set(evaluation_challenge.MAY_STATE_TOPICS))}")
+    assert not owed & set(evaluation_challenge.MACHINE_TOPICS), (
+        "a machine anchor is on the floor; that is the finding #830 opened on")
+    assert challenge["may_state"] and challenge["machine_state"], (
+        "the inventory shrank instead of splitting — a deletion of the data, not of the obligation")
 
 
 def test_every_topic_the_contract_governs_is_reachable():
     """A topic in `TOPICS` that no dense payload can light is a field written
     for a reader nobody built (AGENTS.md boundary 6). This is the check that
     caught out_of_scope needing a fixture at all."""
-    topics = {entry["topic"] for entry in _dense_challenge()["must_state"]}
-    assert set(evaluation_challenge.TOPICS) == topics, (
-        f"unreachable topics: {sorted(set(evaluation_challenge.TOPICS) - topics)}")
+    challenge = _dense_challenge()
+    for key, declared in (("must_state", evaluation_challenge.TOPICS),
+                          ("may_state", evaluation_challenge.MAY_STATE_TOPICS),
+                          ("machine_state", evaluation_challenge.MACHINE_TOPICS)):
+        topics = {entry["topic"] for entry in challenge[key]}
+        assert set(declared) == topics, (
+            f"unreachable {key} topics: {sorted(set(declared) - topics)}")
 
 
 def test_coverage_names_the_extent_of_every_illegible_disclosure():
@@ -270,6 +316,7 @@ def main():
         test_the_checker_derives_its_blacklist_from_the_schemas,
         test_fixed_topics_stay_within_their_declared_ceiling,
         test_no_owed_fact_is_a_duplicate_another_could_absorb,
+        test_the_owed_floor_stayed_smaller_than_the_whole_inventory,
         test_every_topic_the_contract_governs_is_reachable,
         test_coverage_names_the_extent_of_every_illegible_disclosure,
         test_every_test_is_registered,

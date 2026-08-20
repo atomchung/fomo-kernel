@@ -552,9 +552,10 @@ def _grounding_fidelity(path: str | None) -> dict:
 
 
 # must_state topics whose numeric values are the answer's own load-bearing
-# numbers — weights, concentration readings, cash. These must appear as digits
-# in the presented answer (the same display discipline answer_provenance holds
-# an --agent-case to), which is what makes the check language-independent.
+# numbers. These must appear as digits in the presented answer (the same
+# display discipline answer_provenance holds an --agent-case to), which is
+# what makes the check language-independent.
+#
 # `basis` numbers are deliberately NOT here: `stale_days` is contractually
 # presentable in words ("nine days old" is references/trade-consequence.md's
 # own example sentence), so failing a worded form would put this gate at war
@@ -563,6 +564,23 @@ def _grounding_fidelity(path: str | None) -> dict:
 # example sentence states one as "priced at Tuesday's closes". Whether the
 # market session actually reached the user is the `comprehension` verdict's
 # call, exactly like every other engine-vocabulary string here.
+#
+# This is a number-SHAPE vocabulary — which topics carry a digit-checkable
+# value — and not a claim about which of them a current engine puts on
+# `must_state`. Since #830 only `position` reaches it: `concentration` and
+# `cash` moved to the challenge's `may_state`, so no answer owes them by
+# default and this loop stops seeing them. They stay listed because this tool
+# reads a block a human pasted, and a paste from a build that predates the
+# split still carries them on `must_state` — dropping the two rows would turn
+# that paste's load-bearing numbers into unchecked ones silently, which is the
+# shape of QA evidence this file exists not to produce.
+#
+# What #830 deliberately does NOT do is scan `may_state` for the same digits.
+# Counting an available reading as `facts_missing` would re-impose, from the
+# QA side and one file away from the contract that deleted it, exactly the
+# standing obligation the owner audit removed. Whether the answer said the
+# readings this decision needed is the owner's `comprehension` verdict, which
+# is the oracle relevance has always had here.
 NUMERIC_FACT_TOPICS = ("position", "concentration", "cash")
 NUMBER_TOKEN = re.compile(r"\d+(?:,\d{3})*(?:\.\d+)?")
 
@@ -781,6 +799,29 @@ def _challenge_fidelity_payload(payload: dict) -> dict:
             "sector -- so a sector name the answer states can be checked "
             "against what this response actually emitted")
     sector_evidence = _sector_fidelity(payload["sector_display"], presented_text)
+
+    # #830. A machine anchor rendered at a person is a delivery defect, and
+    # this is the one place that can decide it exactly rather than by
+    # pattern: the frozen value and the presented text are both in hand.
+    # Refused rather than counted, on the same reasoning `quote_verbatim`
+    # already carries — a `facts_missing`-style tally would let the run
+    # record the leak and continue, and there is no acceptable number of
+    # content hashes to show someone mid-decision.
+    #
+    # Silent on a challenge with no `machine_state` key: such a block came
+    # from an engine that predates the split, whose anchors were still on
+    # `must_state`, and refusing it would break a paste this tool has
+    # always accepted. Absence is "nothing declared", never a clean result.
+    for entry in challenge.get("machine_state") or ():
+        if not isinstance(entry, dict) or "topic" not in entry or "value" not in entry:
+            raise ReceiptError(
+                "--challenge-check-file machine_state entries must carry topic and value")
+        value = entry["value"]
+        if isinstance(value, str) and value and value in presented_text:
+            raise ReceiptError(
+                f"--challenge-check-file presented_text renders the machine anchor "
+                f"{entry['topic']!r}; those values exist for a mechanical comparison and "
+                "are never shown to a person — say which day the book was true instead")
 
     quotes = []
     for entry in quote_verbatim:

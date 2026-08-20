@@ -27,7 +27,7 @@ every public fact, and never infer the user's motive.
 
 How that brief is said is not this file's to decide: apply the global
 [expression contract](../../../docs/expression-contract.md) — voice V1–V9,
-disclosure placement D1–D6, provenance labelling C1–C4. Source and as-of on a
+disclosure relevance and placement D1–D7, provenance labelling C1–C4. Source and as-of on a
 public fact are C2; the labelled judgment risk is C1. This file owns only what
 the read may compute and what it must refuse.
 

@@ -15,7 +15,7 @@ order.
 
 Voice is one of three expression registries.
 [expression-contract.md](expression-contract.md) routes to this file for V1–V9
-and owns the other two: **where a disclosure goes** (D1–D6) and **how a claim
+and owns the other two: **where a disclosure goes, and on which floor** (D1–D7) and **how a claim
 states where it came from** (C1–C4). A rule about placement or citation belongs
 there, not here; a rule about what an answer leads with, refuses to
 manufacture, or stops at belongs here.

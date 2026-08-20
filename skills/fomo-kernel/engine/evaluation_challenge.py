@@ -40,12 +40,53 @@ until now nothing did: an agent economizing on production had no way to tell
 which of the forty payload fields were the ones it could not drop.
 
 ``must_state`` is that floor, and it is deliberately a list of *facts*, not
-of sentences. Several facts belong in one sentence — the basis topic's four
-entries are one clause ("computed on your recorded book as of the 20th, nine
-days old"), not four bullet points. The block bounds an answer from below
-and says nothing about its length; a short answer that carries every entry
-is exactly what rule 8 asks for, and a long one that drops a rule collision
+of sentences. Several facts belong in one sentence — the basis entries are
+one clause ("computed on your recorded book as of the 20th, nine days
+old"), not a bullet each. The block bounds an answer from below and says
+nothing about its length; a short answer that carries every entry is
+exactly what rule 8 asks for, and a long one that drops a rule collision
 still fails.
+
+Three lists, not one (#830)
+---------------------------
+Owner ruling, 2026-08-20: separate what is genuinely required from what is
+not, and delete everything whose must-have reason cannot be stated. Audit the
+obligation inventory itself rather than pricing its output. The audit's exhibit A was
+``basis.state_version``, a content hash sitting on the list of facts a human
+answer owes. A whitelist of roughly fifteen owed facts has one cheapest
+discharge — one sentence per item — so the wall of tables the owner could
+not finish reading was obligation discharge rather than judgment.
+
+The repair is structural rather than a length rule. What one call emits is
+now three lists with three different standings, and the split is what makes
+"delete" mean something a caller can act on:
+
+``must_state``
+    The floor. Stance-carrying facts an answer may not drop: which position
+    this trade moves, the user's own rules it touches, the limitations that
+    change what a number refers to, and the book/market dates those numbers
+    were measured at. Each keep has a stated reason in
+    ``references/trade-consequence.md``.
+``may_state``
+    Computed, available, and owed to nobody by default: the concentration
+    family and cash. They surface when this decision turns on them — when
+    concentration IS the deciding fact, when it collides with a line the
+    user wrote (which stays mandatory through ``rule_effects``), when cash
+    is the question or a floor is being crossed — and stay silent
+    otherwise. A system-default trigger is a may-state, not a sermon.
+``machine_state``
+    Never rendered, in any register. ``basis.state_version`` is the whole
+    list: it exists so a QA run can compare what the user saw against the
+    frozen payload mechanically, and there is no sentence a human wants it
+    in.
+
+Nothing was deleted from the *data* layer: every number the engine computed
+is still on the evaluation row, still anchorable, still citable, and the
+user can ask for any of it. What was deleted is the standing obligation to
+say it. Selection therefore moves from a list to judgment, and the named
+risk is omitting a consequence that mattered — which is why ``rule_effects``
+and ``required_coverage`` are untouched: the two places where silence would
+help a user break their own rule stay machine-enforced.
 
 What is mechanically enforced, and what is not
 ------------------------------------------------
@@ -60,7 +101,7 @@ satisfy a checker — the "eval must not pin current wording" failure this
 repository has already shipped once.
 
 Everything else here — that the user's exact words are quoted rather than
-paraphrased, that the unchecked list is spoken aloud — reaches the user
+paraphrased, that a material gap earns its one line — reaches the user
 through the agent, and nothing offline can observe whether it arrived. That
 is the same instruction-only footing ``docs/development-guide.md`` section 4
 already admits for the recommendation ban and ``freeform-answers.md`` admits
@@ -142,8 +183,34 @@ import consequence as consequence_engine
 # was valued at, then every number measured from the two. An agent is free to
 # compose these into whatever prose the moment calls for; the order is the
 # order the facts depend on each other, not a script.
-TOPICS = ("basis", "price_basis", "position", "concentration", "cash",
+#
+# `concentration` and `cash` left this tuple in #830 and now live in
+# `MAY_STATE_TOPICS`. The order that remains is a dependency order, never a
+# reading order: `references/trade-consequence.md` states the reader's own
+# question chain the answer is arranged by, and the deciding fact opens it.
+TOPICS = ("basis", "price_basis", "position",
           "rule_collision", "disclosure", "excluded_holding", "out_of_scope")
+
+# Computed every call, owed on no call (#830). These are the two families the
+# owner audit found being recited as a standing sermon: the concentration
+# readings (both arms of the #827 A/B independently wrote the same sentence,
+# that the line is a system default and not the user's own, which is what
+# obligation discharge sounds like) and the cash line.
+# They are emitted so an answer can reach for them the moment the decision
+# turns on one, and they carry no default obligation to appear.
+#
+# The mandatory half did not move: a concentration reading that collides with
+# a line the *user* wrote still arrives through `rule_effects`, which is
+# enforced by `required_coverage`. What became optional is the engine's own
+# default threshold, not the user's.
+MAY_STATE_TOPICS = ("concentration", "cash")
+
+# Never rendered, in any register (#830). `basis.state_version` is a content
+# hash whose only reader is a QA comparison; it was on `must_state` until the
+# owner audit named it exhibit A of machine plumbing conflated with
+# human-owed content. It stays in the payload, addressable and comparable,
+# and stops being described as something an answer owes a person.
+MACHINE_TOPICS = ("state_version",)
 
 # The two lists `book_legibility` builds, and the disclosure each one is the
 # extent of (#823). They are not `excluded_holdings`: an excluded holding is
@@ -280,22 +347,52 @@ def _entry(record, topic, anchor, value, detail=None):
 
 
 def _basis_entries(record, basis):
-    """Which book answered, how current it was, how it was obtained, and its
-    exact identity. Unconditional: there is no such thing as a consequence
-    with no basis, and a weight quoted without the book it was measured on
-    is the same number said about an unknown denominator.
+    """*When* the book the numbers were measured on was true. Unconditional:
+    there is no such thing as a consequence with no basis, and a weight
+    quoted without the day it was measured is a number about an unknown
+    book.
 
-    `completeness` is on this list and not only in `required_coverage`.
-    "This came from an unreconciled CSV import rather than a declared
-    snapshot" is the limitation a user can act on; `state_version` is the
-    identity a QA run compares mechanically. Both are owed, and leaving the
-    first to be inferred from the second would be the more useful half going
-    unsaid."""
+    Two fields, where there were five (#830). The old list recited the
+    basis four ways on every answer — where the book came from, how current
+    it was, whether it had been reconciled, and its exact hash — and a
+    four-part recital is the shape whose cheapest discharge is four
+    sentences. What survives is the pair a person can act on: the date, and
+    how old that makes it. `stale_days` rides beside `as_of` rather than
+    being inferred from it because staleness is the half that changes a
+    decision, and only the engine knows the market days between them.
+
+    What left, and where it went. `source` and `completeness` stay on the
+    frozen row and in `required_coverage` — a stale or unreconciled book
+    still forces an `--agent-case` to cite `basis`, and `basis.as_of` /
+    `basis.stale_days` are what it cites — but neither is a sentence a
+    person is owed on an answer where nothing about the book decides
+    anything. `state_version` moves to `machine_state` and is never
+    rendered at all.
+    """
     out = []
-    for field in ("source", "as_of", "stale_days", "completeness", "state_version"):
+    for field in ("as_of", "stale_days"):
         if field in basis:
             out.append(_entry(record, "basis", f"basis.{field}", basis[field]))
     return out
+
+
+def _machine_entries(record, basis):
+    """What the payload carries for machines and no answer may render.
+
+    One entry today: the book's exact identity, present so a QA run can
+    compare what the user saw against the frozen payload mechanically. It
+    used to sit on `must_state`, which is how a content hash came to be
+    described as a fact a human answer owes — the finding that opened
+    #830's audit.
+
+    Emitted rather than dropped for the same reason the block is emitted at
+    all: the comparison it enables is real, and a caller holding only this
+    block should be able to make it. Naming the list is what stops the
+    obligation from coming back: an entry here is data with an address, not
+    content with a reader."""
+    if "state_version" not in basis:
+        return []
+    return [_entry(record, "state_version", "basis.state_version", basis["state_version"])]
 
 
 def _price_basis_entries(record, basis):
@@ -418,7 +515,16 @@ def _concentration_entries(record, consequence):
     """Concentration and driver overlap after the trade — every reading that
     is actually a measurement (see `_measured`). The two triggers are stated
     only when they are on: a flag that is false is the absence of a fact, and
-    listing it would pad the floor with non-events."""
+    listing it would pad the floor with non-events.
+
+    A `may_state` family since #830. These readings were owed on every
+    answer, and the owner's verdict on the result was that the first large block
+    of the answer meant nothing: a book whose concentration did not move still
+    got a paragraph about concentration. They are computed and offered; the answer states
+    one when it is the fact that decides this call, or when it touches a
+    line the user wrote — and that second case is not left to judgment,
+    because `rule_effects` carries it and `required_coverage` enforces
+    it."""
     after = consequence.get("after") or {}
     out = [_entry(record, "concentration", f"consequence.after.{field}", after[field])
            for field in ("top3", "ai_pct", "max_sector_pct") if _measured(field, after)]
@@ -431,7 +537,12 @@ def _concentration_entries(record, consequence):
 def _cash_entries(record, consequence):
     """What the trade leaves in cash. Whether that balance can be trusted is
     the separate `cash_unreliable` disclosure, which rides the disclosure
-    topic rather than being folded in here."""
+    topic rather than being folded in here.
+
+    A `may_state` family since #830, on the same reasoning as concentration
+    above: state it when cash is what the user asked about, or when this
+    trade takes the balance through a floor. A cash line recited beside
+    every buy is the disclosure that taught the reader to stop reading."""
     cash = (consequence.get("after") or {}).get("cash") or {}
     out = []
     for field in ("balance", "weight"):
@@ -640,6 +751,13 @@ def build_challenge(*, premise, basis, consequence, rule_collisions=(), context=
         Ordered owed facts, each ``{topic, value}`` plus ``anchor`` when the
         fact is addressable. Facts, not sentences — see the module
         docstring on rule 8.
+    ``may_state``
+        Computed and available, owed by default on no call: the
+        concentration family and cash. State one when this decision turns
+        on it (#830).
+    ``machine_state``
+        Machine anchors. Addressable, comparable, and never rendered to a
+        person in any register.
     ``rule_effects``
         The product-safe projection of what this trade does to each of the
         user's own rules: the deterministic effect, the line it was judged
@@ -666,15 +784,19 @@ def build_challenge(*, premise, basis, consequence, rule_collisions=(), context=
     must_state.extend(_basis_entries(record, basis))
     must_state.extend(_price_basis_entries(record, basis))
     must_state.extend(_position_entries(record, premise, consequence))
-    must_state.extend(_concentration_entries(record, consequence))
-    must_state.extend(_cash_entries(record, consequence))
     must_state.extend(_rule_collision_entries(record, rule_collisions))
     must_state.extend(_disclosure_entries(record, consequence))
     must_state.extend(_excluded_holding_entries(record, consequence))
     must_state.extend(_out_of_scope_entries(record, consequence))
 
+    may_state = []
+    may_state.extend(_concentration_entries(record, consequence))
+    may_state.extend(_cash_entries(record, consequence))
+
     return {
         "must_state": must_state,
+        "may_state": may_state,
+        "machine_state": _machine_entries(record, basis),
         "rule_effects": _rule_effect_projection(rule_collisions),
         "quote_verbatim": _quote_verbatim(context),
         "unchecked": _unchecked(context),

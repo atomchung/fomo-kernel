@@ -1789,6 +1789,60 @@ def test_challenge_fidelity_refuses_a_hollow_challenge():
         raise AssertionError(f"a hollowed challenge was accepted: {hollow}")
 
 
+# #830. `basis.state_version` is a content hash whose only reader is this
+# tool's own comparison, and it sat on `must_state` — the list of facts a
+# human answer owes — until an owner audit named it. The delivery evidence is
+# where the leak can be decided exactly rather than by pattern, because the
+# frozen value and the presented text are both in hand here.
+
+STATE_VERSION = "pb-v1:" + "7c1e" * 16
+
+
+def machine_state_payload(presented_text):
+    payload = challenge_check_payload(presented_text=presented_text)
+    payload["challenge"]["machine_state"] = [
+        {"topic": "state_version", "value": STATE_VERSION,
+         "anchor": "basis.state_version"}]
+    payload["challenge"]["quote_verbatim"] = []
+    return payload
+
+
+def test_an_answer_that_renders_a_machine_anchor_is_refused():
+    """Refused, never counted. A `facts_missing`-style tally would let the
+    run record the leak and continue, and there is no acceptable number of
+    content hashes to show someone mid-decision."""
+    leaked = machine_state_payload(SYNTHETIC_ANSWER + " Basis " + STATE_VERSION + ".")
+    try:
+        fidelity_of(leaked)
+    except ux_receipt.ReceiptError as error:
+        assert "machine anchor" in str(error), error
+    else:
+        raise AssertionError("a rendered content hash produced usable delivery evidence")
+    # The same answer, the same declared anchor, one sentence shorter.
+    assert fidelity_of(machine_state_payload(SYNTHETIC_ANSWER))["facts_missing"] == 0
+
+
+def test_a_challenge_from_before_the_split_is_still_readable():
+    """`machine_state` is additive. A block pasted from a build that predates
+    #830 carries no such key, and absence is 'nothing declared' — never a
+    reason to refuse a paste this tool has always accepted, and never a
+    clean result reported as if a check had run."""
+    payload = challenge_check_payload()
+    assert "machine_state" not in payload["challenge"]
+    assert fidelity_of(payload)["facts_missing"] == 0
+
+
+def test_a_malformed_machine_anchor_entry_is_refused_rather_than_skipped():
+    payload = machine_state_payload(SYNTHETIC_ANSWER)
+    payload["challenge"]["machine_state"] = [{"topic": "state_version"}]
+    try:
+        fidelity_of(payload)
+    except ux_receipt.ReceiptError as error:
+        assert "machine_state" in str(error), error
+    else:
+        raise AssertionError("an entry with no value passed as nothing to check")
+
+
 def test_a_bare_zero_token_does_not_state_a_nonzero_fact():
     # Every fraction below one half rounds to a bare "0", so that token
     # carries no information about the value.

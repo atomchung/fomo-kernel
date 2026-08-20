@@ -1,18 +1,13 @@
 {
   "id": "TA-001",
-  "title": "The same grounded challenge can be complete yet bury the decision",
+  "title": "The same grounded challenge can be complete yet bury the decision, and completeness is not the floor it looks like",
   "source": {
     "kind": "agent_declared_synthetic_hypothesis",
-    "refs": ["#590"],
+    "refs": ["#590", "#830"],
     "date": "2026-08-01"
   },
   "declared_by": "agent",
-  "axes": [
-    "decision_focus",
-    "internal_consistency",
-    "decision_synthesis",
-    "caveat_discipline"
-  ],
+  "axes": ["decision_focus", "internal_consistency", "decision_synthesis", "caveat_discipline"],
   "question": {
     "kind": "trade_evaluation",
     "text": "I am considering adding FICTIONAL-A because customer demand appears stronger. What does this decision change?"
@@ -43,13 +38,7 @@
         "scope": "full_current_book",
         "total_holdings": 5,
         "valued_holdings": 5,
-        "priced": [
-          "FICTIONAL-A",
-          "FICTIONAL-B",
-          "FICTIONAL-C",
-          "FICTIONAL-D",
-          "FICTIONAL-E"
-        ],
+        "priced": ["FICTIONAL-A", "FICTIONAL-B", "FICTIONAL-C", "FICTIONAL-D", "FICTIONAL-E"],
         "cost_fallback": [],
         "unavailable": [],
         "currencies": ["USD"]
@@ -68,11 +57,26 @@
     "consequence": {
       "before": {
         "held": {
-          "FICTIONAL-A": {"shares": 200.0, "cost": 20000.0},
-          "FICTIONAL-B": {"shares": 200.0, "cost": 20000.0},
-          "FICTIONAL-C": {"shares": 200.0, "cost": 20000.0},
-          "FICTIONAL-D": {"shares": 200.0, "cost": 20000.0},
-          "FICTIONAL-E": {"shares": 200.0, "cost": 20000.0}
+          "FICTIONAL-A": {
+            "shares": 200.0,
+            "cost": 20000.0
+          },
+          "FICTIONAL-B": {
+            "shares": 200.0,
+            "cost": 20000.0
+          },
+          "FICTIONAL-C": {
+            "shares": 200.0,
+            "cost": 20000.0
+          },
+          "FICTIONAL-D": {
+            "shares": 200.0,
+            "cost": 20000.0
+          },
+          "FICTIONAL-E": {
+            "shares": 200.0,
+            "cost": 20000.0
+          }
         },
         "weights": {
           "FICTIONAL-A": 0.2,
@@ -103,11 +107,26 @@
       },
       "after": {
         "held": {
-          "FICTIONAL-A": {"shares": 295.8904, "cost": 29589.04},
-          "FICTIONAL-B": {"shares": 200.0, "cost": 20000.0},
-          "FICTIONAL-C": {"shares": 200.0, "cost": 20000.0},
-          "FICTIONAL-D": {"shares": 200.0, "cost": 20000.0},
-          "FICTIONAL-E": {"shares": 200.0, "cost": 20000.0}
+          "FICTIONAL-A": {
+            "shares": 295.8904,
+            "cost": 29589.04
+          },
+          "FICTIONAL-B": {
+            "shares": 200.0,
+            "cost": 20000.0
+          },
+          "FICTIONAL-C": {
+            "shares": 200.0,
+            "cost": 20000.0
+          },
+          "FICTIONAL-D": {
+            "shares": 200.0,
+            "cost": 20000.0
+          },
+          "FICTIONAL-E": {
+            "shares": 200.0,
+            "cost": 20000.0
+          }
         },
         "weights": {
           "FICTIONAL-A": 0.27,
@@ -266,6 +285,27 @@
       "expect_eligible": true,
       "judge_fails": [],
       "prose": "On the 2026-08-01 recorded snapshot, FICTIONAL-A would move from 20% to 27%, a 7% increase, so the proposed add crosses this rule: Keep any single position at or below 25% of the recorded book. The add also puts top-three concentration at 63.5%, classified AI and maximum-sector exposure at 27%, and cash at $10,410.96 or 8.6758%. The user's exact premise and why-now are: Customer demand appears stronger. The latest customer conversations sound more urgent. The real decision is whether that still-unverified observation has earned the exception. The strongest case for the add is conditional: if the change is genuinely new and durable, accepting a temporary breach can be an explicit choice rather than accidental drift. The strongest case against directly tests that support: the customer conversations are the user's why-now, not independently verified evidence, so the same story may be loosening the rule at the moment it binds. Because this is not a live broker view, and liquidity, valuation, tax, broader position fit, and whether the evidence actually changed were not checked, the crossing identifies a decision conflict but does not certify execution-time conditions. The user can keep the trade open while checking the claim, resize it to avoid the breach, or decline it."
+    },
+    {
+      "id": "deletion_first_compact",
+      "agent_case_ref": "grounded_two_sided",
+      "expect_eligible": true,
+      "judge_fails": [],
+      "prose": "Not at this size. Moving FICTIONAL-A from 20% to 27%, a 7% increase, crosses a line the user wrote themselves: Keep any single position at or below 25% of the recorded book. What would justify crossing it is the one thing nothing here checked. The user's exact premise and why-now are: Customer demand appears stronger. The latest customer conversations sound more urgent. What would change this call is an independent read on that demand: if the change is genuinely new and durable, a deliberate exception is a real option, and if it is the same story told with more urgency, the trade loosens the rule at the moment it binds. (Recorded snapshot, 2026-08-01, priced that same day; whether the evidence actually changed was not checked.)"
+    },
+    {
+      "id": "discharges_every_available_fact",
+      "agent_case_ref": "grounded_two_sided",
+      "expect_eligible": true,
+      "judge_fails": ["decision_focus"],
+      "prose": "The recorded book is a 2026-08-01 snapshot rather than a live broker view, and it was priced on 2026-08-01. Top-three concentration after the add would be 63.5%. Classified AI exposure would be 27% and maximum-sector exposure would be 27%. Cash would be $10,410.96, or 8.6758% of the recorded book. FICTIONAL-A would move from 20% to 27%, a 7% increase. The standing rule is: Keep any single position at or below 25% of the recorded book. Liquidity was not checked. Valuation was not checked. Tax was not checked. Whether the position still fits beyond this book was not checked. Whether the evidence actually changed was not checked. The user's exact premise and why-now are: Customer demand appears stronger. The latest customer conversations sound more urgent. Those remain user-reported rather than verified. Taken together, the add crosses the recorded cap and the observation behind it is unverified, so it should not be placed at this size."
+    },
+    {
+      "id": "renders_the_book_hash",
+      "agent_case_ref": "grounded_two_sided",
+      "expect_eligible": false,
+      "judge_fails": [],
+      "prose": "Not at this size. Moving FICTIONAL-A from 20% to 27%, a 7% increase, crosses a line the user wrote themselves: Keep any single position at or below 25% of the recorded book. The user's exact premise and why-now are: Customer demand appears stronger. The latest customer conversations sound more urgent. Computed on book pb-v1:0000000000000000000000000000000000000000000000000000000000000000, recorded 2026-08-01."
     }
   ]
 }

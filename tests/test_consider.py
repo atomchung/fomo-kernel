@@ -2963,6 +2963,21 @@ def _check_challenge_shape(challenge):
                 assert entry["detail"]["reason"] in set(
                     entry_props["detail"]["properties"]["reason"]["enum"]), entry
 
+    # #830's two sibling lists. Same entry shape, different standing, so the
+    # shape check is the same walk and the topic vocabularies are what keep
+    # them apart -- a concentration reading that showed up under
+    # `machine_state` would be a fact nobody is allowed to say.
+    for key in ("may_state", "machine_state"):
+        sibling_props = props[key]["items"]["properties"]
+        sibling_topics = set(sibling_props["topic"]["enum"])
+        for entry in challenge[key]:
+            assert set(entry) <= set(sibling_props), f"undeclared {key} field: {sorted(entry)}"
+            assert set(props[key]["items"]["required"]) <= set(entry)
+            assert entry["topic"] in sibling_topics, entry
+            assert isinstance(entry["value"], (str, int, float, bool))
+            if "anchor" in entry:
+                assert entry["anchor"].split(".")[0] in ("basis", "consequence", "rule_collisions")
+
     quote_props = props["quote_verbatim"]["items"]["properties"]
     for quoted in challenge["quote_verbatim"]:
         assert set(quoted) == set(quote_props)
@@ -3081,9 +3096,18 @@ def test_a_considered_trade_puts_the_whole_challenge_in_front_of_the_caller():
         _check_challenge_shape(challenge)
 
         topics = {e["topic"] for e in challenge["must_state"]}
-        for owed in ("basis", "position", "concentration", "rule_collision", "disclosure"):
+        for owed in ("basis", "position", "rule_collision", "disclosure"):
             assert owed in topics, f"nothing in must_state states the {owed}"
-        assert challenge["unchecked"], "an answer that names no unchecked risk reads as a clean bill"
+        # #830. Concentration and cash arrive on the production path too --
+        # on may_state, computed and addressed, owed by default on no call.
+        # A deletion that stopped computing them would be a different change
+        # and a worse one: the user can still ask.
+        assert {e["topic"] for e in challenge["may_state"]} == {"concentration", "cash"}, (
+            f"the available readings drifted: {sorted(challenge['may_state'], key=str)}")
+        assert [e["anchor"] for e in challenge["machine_state"]] == ["basis.state_version"], (
+            "the one machine anchor must still ride the payload, and must ride it alone")
+        assert not any(e["topic"] in ("concentration", "cash") for e in challenge["must_state"])
+        assert challenge["unchecked"], "the availability list is still emitted for the receipt"
         assert challenge["case_required"] == {
             "recommendation": 1, "support": 1, "counter_case": "when_material"}
         assert challenge["required_coverage"], (

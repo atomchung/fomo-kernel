@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "privacy": "synthetic_only",
-  "comment": "Synthetic witnesses for docs/expression-contract.md's deterministic C4 check. Issue #825 retired the formatting-only E-1 through E-4 assertions; placement, markers, and answer length may vary. Every scene is invented and nothing is derived from a user record.",
+  "comment": "Synthetic witnesses for docs/expression-contract.md's deterministic checks. Issue #825 retired the formatting-only E-1 through E-4 assertions; placement, markers, and answer length may vary. #830 added E-6, D7's machine-anchor floor, and the three acceptance templates the owner approved for the deletion-first answer shape. Every scene is invented and nothing is derived from a user record; all issuers are fictional (Widgetron WDGT, Gridcore GRDC, Fabrion FABR).",
   "scenes": [
     {
       "id": "consider_inline_limitation",
@@ -30,6 +30,34 @@
       "fails": "E-5",
       "note": "C4. A payload token said at the user instead of what it means for the decision.",
       "answer": "ACME goes from 30% to 38% after this buy, and the rule comes back already_over."
+    },
+    {
+      "id": "deletion_first_three_way_comparison",
+      "kind": "positive",
+      "covers": ["D1", "D2", "D4", "D7", "C1", "C2"],
+      "note": "#830 acceptance template 1. The same call that produced roughly 2,300 characters under the whitelist era. The stance opens it, the deciding reason is event risk rather than a concentration sermon, the counter-side exists only as the one line that could overturn the pick, and the book date, the price session and the unchecked valuation gap are one end block of one line each — never narrated twice.",
+      "answer": "三個裡我會選 GRDC 加 15 股。決定性理由：三案對組合的影響都在一個百分點內——誰都不改變你的集中度——真正有差的只有事件風險：WDGT 六天後出財報、預期已拉滿（公司財報行事曆，2026-08-14），這時把最大倉再加大，是三案裡波動最大的；FABR 18 股只佔 1.2%，公司再好這個大小也改變不了結果。GRDC 下次財報在十月底，中間乾淨，上季主業 +82%（公司財報，2026-07-30）撐著。\n\n反面就一條：前三大會從 51.3% 升到 51.9%（GRDC 本來就是第二大）——嫌集中的話這是三案共同的問題，答案是減碼不是選誰。\n會讓我改口：你本來就想賭財報超預期——那 WDGT 反而是最直接的表達，排序整個反過來。\n\n（帳本 8/14、價格 8/14 收盤；三案動用 $4.4K／$5.1K／$4.9K；估值未評）"
+    },
+    {
+      "id": "deletion_first_recorded_consideration",
+      "kind": "positive",
+      "covers": ["D4", "D7"],
+      "note": "#830 acceptance template 2. A canonical write happened, so the considered-is-not-executed line is owed — and it is the whole answer. Nothing about the basis, the concentration family or the unchecked list appears, because nothing about them decides anything here.",
+      "answer": "記好了：GRDC 買 15 股（@8/14 收盤 $312.40）已存成一筆考慮紀錄——記的是「你考慮過並選了它」，不是「已成交」；真的成交後把交易紀錄丟給我接上。比較用的另外兩案沒有留下任何正式紀錄。"
+    },
+    {
+      "id": "deletion_first_no_book_single_name",
+      "kind": "positive",
+      "covers": ["D1", "D2", "D4", "D7", "C1", "C2"],
+      "note": "#830 acceptance template 3. No recorded book, so every book-derived claim is refused — and the answer still lands a stance, names the gap that decides it, and attaches a falsifier the user could actually write down. The two limits that remain are one end-block line.",
+      "answer": "WDGT 這家公司的證據支持買，但「現在進場」我不背書——缺的是估值，不是基本面。上季營收 +24%、EPS 超預期、同日上修全年（公司新聞稿，2026-07-24），這是硬的；但這些已公開三週，而我查不到現在的估值倍數，「好消息是否已在價格裡」這一半我答不了。\n\n$5,000 試水溫，真正的洞在出場：「故事變了就賣」跟你的進場理由是同一個變數，等於沒有獨立的認錯線。可檢查的替代就用它自己簽的支票：全年營收財測或毛利率轉向，擇一寫下來，就可以進場。\n\n（價 8/14 收盤 $188.20；你未提供持倉，部位佔比與重疊無法評）"
+    },
+    {
+      "id": "machine_anchor_rendered",
+      "kind": "negative",
+      "fails": "E-6",
+      "note": "D7's bottom floor. The book's content hash exists so a QA run can compare what the user saw against the frozen payload; there is no register in which a person wants it. Say which day the book was true instead.",
+      "answer": "GRDC 加 15 股，前三大從 51.3% 升到 51.9%。本次計算所依據的帳本版本為 pb-v1:9f2c41ab7d3e8056c1b4fa27de90583716c4ad2b9e70f18c53a6db4491e2073f。"
     }
   ]
 }
