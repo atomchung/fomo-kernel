@@ -1,0 +1,27 @@
+{
+  "version": "v2",
+  "locale": "en",
+  "split": "calibration",
+  "prompts": [
+    {"id":"v2-en-cal-dec-01","class":"named_security_decision","text":"Should I buy Microsoft before its next earnings report?","note":"Named security plus an explicit buy decision."},
+    {"id":"v2-en-cal-dec-02","class":"named_security_decision","text":"My Tesla thesis has weakened. Should I reduce the position or keep holding?","note":"Named security plus a live reduce-or-hold decision."},
+    {"id":"v2-en-cal-dec-03","class":"named_security_decision","text":"Is Amazon a sensible three-year investment from here?","note":"Named security, horizon, and investment judgment request."},
+    {"id":"v2-en-cal-dec-04","class":"named_security_decision","text":"I do not have a portfolio file here. Would you still recommend adding Nvidia now?","note":"No-book wording must not block a named-security decision."},
+    {"id":"v2-en-cal-dec-05","class":"named_security_decision","text":"For new money, would you choose Apple or wait for a better entry?","note":"Named security and explicit allocation choice."},
+    {"id":"v2-en-cal-dec-06","class":"named_security_decision","text":"AMD is down sharply since I bought it; should I exit, add, or do nothing?","note":"Named security with three live actions."},
+
+    {"id":"v2-en-cal-dis-01","class":"candidate_discovery","text":"Find a shortlist of profitable cybersecurity stocks worth researching for a five-year hold.","note":"Explicit investment-candidate discovery."},
+    {"id":"v2-en-cal-dis-02","class":"candidate_discovery","text":"Screen for renewable-energy companies with improving free cash flow and tell me which look investable.","note":"Explicit discovery with filters and selection request."},
+    {"id":"v2-en-cal-dis-03","class":"candidate_discovery","text":"Which semiconductor-equipment stocks should I compare for a long-term position?","note":"Requests a candidate set for an investment decision."},
+    {"id":"v2-en-cal-dis-04","class":"candidate_discovery","text":"Give me three public-company alternatives to Costco and rank them as investments.","note":"Alternative discovery and ranking are explicit."},
+    {"id":"v2-en-cal-dis-05","class":"candidate_discovery","text":"Help me discover income ETFs for a retirement-account watchlist, with coverage limits.","note":"Explicit candidate discovery despite no named starting ticker."},
+    {"id":"v2-en-cal-dis-06","class":"candidate_discovery","text":"Build a small shortlist of US software companies with durable margins that may be worth buying.","note":"Explicit shortlist for possible purchase."},
+
+    {"id":"v2-en-cal-neg-01","class":"adjacent_negative","text":"What does a price-to-earnings ratio measure?","note":"Pure investing education with no decision.","near_miss_of":"named_security_decision"},
+    {"id":"v2-en-cal-neg-02","class":"adjacent_negative","text":"What was Nvidia's official closing price yesterday?","note":"Named security but only a market-data lookup.","near_miss_of":"named_security_decision"},
+    {"id":"v2-en-cal-neg-03","class":"adjacent_negative","text":"List the companies currently in the Dow Jones Industrial Average.","note":"Universe lookup without candidate selection or investment intent.","near_miss_of":"candidate_discovery"},
+    {"id":"v2-en-cal-neg-04","class":"adjacent_negative","text":"Which firms are classified in the S&P 500 energy sector? I only need the constituent list.","note":"List retrieval explicitly disclaims candidate evaluation.","near_miss_of":"candidate_discovery"},
+    {"id":"v2-en-cal-neg-05","class":"adjacent_negative","text":"Explain the difference between a market order and a limit order.","note":"General trading education.","near_miss_of":"general"},
+    {"id":"v2-en-cal-neg-06","class":"adjacent_negative","text":"When does the Nasdaq regular trading session open in New York time?","note":"General market-hours lookup.","near_miss_of":"general"}
+  ]
+}

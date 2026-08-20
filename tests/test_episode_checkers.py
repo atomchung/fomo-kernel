@@ -424,19 +424,15 @@ def test_usable_facts_grounding_catches_a_number_the_engine_computed_elsewhere_i
         "actually testing different allow-sets")
 
 
-def test_usable_facts_grounding_catches_fewer_than_two_presented_options():
+def test_usable_facts_grounding_does_not_impose_an_option_count():
     answer = {"prose": "NVDA is about 34% of the book.",
              "presented_options": [{"maps_to": "NVDA", "label": "a", "description": ""}]}
-    findings = R.check_usable_facts_grounding(answer, _UF_FACTS)
-    assert findings and "fewer than two" in findings[0], findings
+    assert R.check_usable_facts_grounding(answer, _UF_FACTS) == []
 
 
-def test_usable_facts_grounding_catches_zero_presented_options():
-    """The recorded-miss shape: pure process narration frames no alternative
-    at all, which is a sharper failure than framing only one."""
-    answer = {"prose": "consider could not compute a consequence for this trade."}
-    findings = R.check_usable_facts_grounding(answer, _UF_FACTS)
-    assert findings and "fewer than two" in findings[0], findings
+def test_usable_facts_grounding_accepts_zero_presented_options():
+    answer = {"prose": "No portfolio number is claimed here."}
+    assert R.check_usable_facts_grounding(answer, _UF_FACTS) == []
 
 
 def test_usable_facts_grounding_abstains_when_the_answer_carries_no_surfaces():
@@ -444,7 +440,7 @@ def test_usable_facts_grounding_abstains_when_the_answer_carries_no_surfaces():
     assert looked is False, "a check with nothing to inspect has abstained, not passed"
 
 
-# ── single_candidate_refusal_shape (#674) ───────────────────────────────────
+# ── single_candidate_integrity (#674/#827) ──────────────────────────────────
 
 def _single_candidate_episode():
     episodes, problems = R.load_bank({"EP-011"})
@@ -453,34 +449,35 @@ def _single_candidate_episode():
     return episodes[0]
 
 
-def test_single_candidate_refusal_shape_covers_safe_tension_and_two_sentence_unavailable():
-    """The production-shaped witness has both valid outcomes, not a generic
-    refusal paragraph that happens to mention the candidate."""
+def test_single_candidate_integrity_allows_recommendations_questions_and_varied_shape():
     episode = _single_candidate_episode()
     safe = next(answer for answer in episode["answers"] if answer["id"] == "safe_tension")
     unavailable = next(answer for answer in episode["answers"] if answer["id"] == "no_safe_value")
     for answer in (safe, unavailable):
-        findings = R.check_single_candidate_refusal_shape(episode, answer, _UF_FACTS)
+        findings = R.check_single_candidate_integrity(episode, answer, _UF_FACTS)
         assert findings == [], findings
         prose = answer["prose"]
         for key in ("premise", "reason", "why_now"):
-            assert prose.count(episode["refusal"][key]) == 1, key
-        assert prose.casefold().count("portfolio fit was not verified") == 1
-        assert not R.NUMBER.search(prose), "a refusal must not add a numeric claim"
+            assert episode["refusal"][key].casefold() in prose.casefold(), key
+    assert safe["prose"].startswith("I recommend")
+    assert "?" in unavailable["prose"]
 
 
-def test_single_candidate_refusal_branch_cannot_fall_back_to_multi_option_contract():
-    """Mutation evidence for deleting the single-candidate branch: #697's
-    two-option checker rejects the deliberately option-free valid answer."""
+def test_single_candidate_integrity_does_not_blanket_ban_grounded_numbers():
     episode = _single_candidate_episode()
-    safe = next(answer for answer in episode["answers"] if answer["id"] == "safe_tension")
-    findings = R.check_usable_facts_grounding(safe, _UF_FACTS)
-    assert any("fewer than two" in finding for finding in findings), findings
+    answer = dict(next(answer for answer in episode["answers"] if answer["id"] == "safe_tension"))
+    answer["prose"] += " The frozen usable fact is 34.3%."
+    findings = R.check_single_candidate_integrity(episode, answer, _UF_FACTS)
+    assert findings == [], findings
 
 
-def test_single_candidate_refusal_contract_cannot_be_deleted_from_the_episode():
-    """A fixture that loses its named single-candidate input must not silently
-    exercise the multi-option path instead."""
+def test_usable_facts_grounding_still_rejects_a_portfolio_number_outside_the_packet():
+    answer = {"prose": "The resulting portfolio weight is 91%."}
+    findings = R.check_usable_facts_grounding(answer, _UF_FACTS)
+    assert findings, "the dedicated frozen numeric allow-set must still fail closed"
+
+
+def test_single_candidate_integrity_contract_requires_the_frozen_user_input():
     loaded = _single_candidate_episode()
     episode = dict(loaded)
     episode["refusal"] = dict(loaded["refusal"])
@@ -489,19 +486,32 @@ def test_single_candidate_refusal_contract_cannot_be_deleted_from_the_episode():
     assert any("requires a refusal object" in problem for problem in problems), problems
 
 
-def test_single_candidate_refusal_process_narration_and_repeat_are_rejected():
-    """Mutation evidence for the observed miss: putting command/retry prose
-    back, or padding the boundary twice, both redden the same narrow checker."""
+def test_single_candidate_integrity_rejects_process_leaks_missing_context_and_false_action():
     episode = _single_candidate_episode()
     diagnostic = next(answer for answer in episode["answers"]
                       if answer["id"] == "diagnostic_narration")
-    findings = R.check_single_candidate_refusal_shape(episode, diagnostic, _UF_FACTS)
+    findings = R.check_single_candidate_integrity(episode, diagnostic, _UF_FACTS)
     assert any("process leakage" in finding for finding in findings), findings
 
-    repeated = dict(next(answer for answer in episode["answers"] if answer["id"] == "safe_tension"))
-    repeated["prose"] += " Portfolio fit was not verified."
-    findings = R.check_single_candidate_refusal_shape(episode, repeated, _UF_FACTS)
-    assert any("exactly once" in finding for finding in findings), findings
+    missing = {"prose": "I recommend waiting."}
+    findings = R.check_single_candidate_integrity(episode, missing, _UF_FACTS)
+    assert any("did not reach the user" in finding for finding in findings), findings
+
+    safe = next(answer for answer in episode["answers"] if answer["id"] == "safe_tension")
+    for claim in (
+        "I placed the trade.",
+        "I bought it.",
+        "The order executed.",
+        "I submitted the order.",
+        "I sold your NVDA shares and published the result.",
+        "I sent the recommendation to your broker.",
+        "我已經替你賣出 NVDA 並發布結果。",
+        "訂單已提交。",
+    ):
+        false_action = dict(safe)
+        false_action["prose"] += f" {claim}"
+        findings = R.check_single_candidate_integrity(episode, false_action, _UF_FACTS)
+        assert any("false external-action" in finding for finding in findings), (claim, findings)
 
 
 def test_consider_refusal_concentration_keys_matches_reviews_own_constant():

@@ -14,15 +14,15 @@ issuer, price, and date below is fictional (`Widgetron Industries`, ticker
 `WDGT`); no example here may be swapped for a real ticker, amount, holding, or
 date of decision.
 
-This lane reuses lane 1b's (#479, `TradeEvaluation`) three questions, the
-bounded market-lookup contract, and every red line; it does not reopen, fork,
-or widen any 1b contract. The outcome under walk is one bounded
-`DecisionFraming`, never a degraded or partially filled `TradeEvaluation`: the
-strongest case for and against, the decision's key tension, the user's own
-stated exit condition, and whichever portfolio fact this decision actually
-turns on, put as a question the user can answer themselves. Confidence rises
-with a book; it does not fall to zero without one — this lane's job is to be
-useful now and to earn the next upload, not to replace `consider`.
+This lane reuses the bounded market-lookup and integrity contracts without
+turning lane 1b's former question sequence into a template. The outcome under
+walk is a useful `DecisionFraming`, never a degraded or partially filled
+`TradeEvaluation`. It may include a direct recommendation, its deciding
+support, a material counter-case, a user-stated exit condition, and any
+question whose answers would change the recommendation. None is present only
+to satisfy a fixed shape. Confidence rises with a book; it does not fall to
+zero without one — this lane's job is to be useful now, not to replace
+`consider`.
 
 `references/decision-framing.md` is the contract these scenes walk. Where a
 scene and that file disagree, the contract wins and the scene is the thing to
@@ -35,22 +35,23 @@ not change the wording, it changes which challenge the answer is about.
 
 - Setup: a user with no CSV export and no holdings snapshot on file opens
   with one live decision, e.g. "I'm thinking about adding to WDGT."
-- Walk: at most three questions are asked — position importance and intended
-  size, why now, and exit or invalidation condition. Fewer than three when
-  the opening message already answered one; a known answer is never
-  re-asked. Each question offers concrete options plus "not sure / depends";
-  free text is reserved for the user's exact reason or exit condition.
-- Pass: the answer is one `DecisionFraming` carrying the four required parts
-  above. No `portfolio_state` field is present at all — absent, not empty or
-  zero-valued. Nothing from this conversation is written to durable state.
-  The one portfolio fact this decision turns on is asked about, not reported
-  as missing.
+- Walk: only questions that can change the recommendation are asked. Position
+  importance, intended size, why now, and exit or invalidation are candidate
+  dimensions, not a mandatory sequence. A known answer is never re-asked.
+  Concrete options plus "not sure / depends" are useful when they make a real
+  branch easier to answer; free text preserves the user's exact reason or exit
+  condition.
+- Pass: the answer gives the useful recommendation and support available from
+  this user's actual inputs. No `portfolio_state` field is present at all —
+  absent, not empty or zero-valued. Nothing from this conversation is written
+  to durable state. A missing portfolio fact is asked about only when its
+  answers could change the recommendation or unlock a portfolio claim.
 - Fail: the answer reads as a thin or degraded `TradeEvaluation`; a
   `portfolio_state` field appears with empty or zero-valued contents instead
   of simply being absent; anything from this conversation — an answer, a
-  chosen principle, a saved rule — is written to disk; the unchecked
-  portfolio facts are recited as a list of gaps instead of one question
-  (see Scene 10).
+  chosen principle, a saved rule — is written to disk; known input is re-asked;
+  a question merely outsources the recommendation; or an unchecked portfolio
+  fact is invented or recited as a completeness list (see Scene 10).
 
 ## Scene 2 — Q1: position importance and intended size
 
@@ -173,37 +174,43 @@ not change the wording, it changes which challenge the answer is about.
   substituted; either response states a portfolio percentage, weight, or
   concentration number.
 
-## Scene 9 — red line 1: no stock picking, no price targets
+## Scene 9 — sourced judgment is allowed; certainty laundering is not
 
 - Setup: the user states a reason the agent can check (e.g. "Widgetron's
   results beat guidance").
 - Walk: the agent verifies the claim, states it with its source and timing,
-  and gives the strongest counter-reading — nothing more.
+  gives the strongest counter-reading, and may make a direct recommendation
+  or forecast when it labels the judgment, assumptions, uncertainty, and
+  evidence boundary.
 - Pass, allowed: "The report came out last week; the reported figure beat
   prior guidance, so the fact is real and it is new. The strongest
   counter-reading: the market already moved on the day it was published, so
   what you are buying now is the post-print price, not the pre-print one."
-- Fail, not allowed: "At the current valuation there is still upside." /
-  "I'd wait for a pullback before entering." / "It's cheaper than its peers,
-  so it's worth buying." / repeating an analyst price target. Discriminator:
-  is this a sourced fact, or a price/direction verdict — the second is out
-  of scope no matter how it is hedged.
+- Pass, allowed: "My judgment is to wait rather than chase the post-print
+  move. That depends on the reported beat proving durable; I did not establish
+  your portfolio fit, and this is not a guaranteed direction call."
+- Fail, not allowed: repeating an analyst target as the agent's own target;
+  describing a forecast as certain; attaching an unsourced valuation claim;
+  or implying the recommendation was executed. A sourced public fact, the
+  user's motive, and the agent's judgment must remain visibly distinct.
 
-## Scene 10 — red line 2: no book, no generic investment advice
+## Scene 10 — no book means no invented portfolio precision
 
 - Setup: the user asks, in effect, whether this position is already too
   much of their portfolio.
 - Walk: the agent has no snapshot and no ledger for this user.
 - Pass, allowed: "Are your three largest positions already the same bet? If
   they are, this isn't adding a position — it's making one bet bigger."
-  Salience picks the single fact this decision turns on and asks about it.
+  Salience picks a fact this decision turns on and asks about it. The answer
+  may also recommend staged entry or a conservative size as agent judgment,
+  provided it does not claim that advice is computed from this user's book.
 - Fail, not allowed: "As a general guideline, no single holding should
   exceed 20%." A position cap is a real product fact measured against a
   computed weight and overridable by the user's own cap setting — produced
   with no book, the identical sentence becomes fortune telling, because the
-  user could already be well past it and nothing here knows that. Also not
-  allowed on this lane: prescribing staged entry, a position-size ceiling, or
-  a leverage rule.
+  user could already be well past it and nothing here knows that. A general
+  risk heuristic may be offered as such; it must not be presented as the
+  user's current weight, remaining capacity, cash effect, or rule collision.
 - Fail, the other way: "I didn't check your weight, concentration, cash, or
   rule collisions." Honest and useless — it reports what the product lacks
   instead of handing the user something to answer. Owner ruling 2026-07-30,
@@ -216,15 +223,13 @@ not change the wording, it changes which challenge the answer is about.
 ## Scene 11 — the turn: "so should I buy it or not?"
 
 - Setup: after the challenge, the user asks the agent to just decide.
-- Pass, allowed: "That decision is yours. What I can do is put the
-  strongest case on each side and point at one thing" — followed by the one
-  specific observation earned by this user's actual answers, e.g. that their
-  exit condition isn't connected to their reason for buying.
-- Fail, not allowed: "Based on the above analysis, a small initial position
-  looks reasonable." This is the most likely failure on this lane, because
-  when there are no numbers to state, the cheapest way to sound useful is to
-  state an opinion — which is exactly when the product has the least
-  standing to.
+- Pass, allowed: "My recommendation is not to buy yet: your exit condition is
+  not connected to your reason for buying. I would change that view if you can
+  name a checkable thesis-break condition." A direct recommendation is useful
+  when its support, countercondition, and non-portfolio scope are explicit.
+- Fail, not allowed: refusing to recommend solely because there is no recorded
+  book; inventing a weight, cash effect, or rule collision; presenting the
+  user's words as external evidence; or claiming an order was submitted.
 
 ## Scene 12 — the invitation names the specific answer it is buying
 

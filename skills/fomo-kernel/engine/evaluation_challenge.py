@@ -33,7 +33,7 @@ is the weakest enforcement tier this repository recognizes
 The relationship to SKILL.md's answer shape
 ------------------------------------
 Rule 8 says a freeform answer — explicitly including a ``consider`` call —
-is brief: no chart, no artifact, no multi-tool production. The same rule
+defaults to direct text; relevant research or presentation remains available. The same rule
 also says "Brevity bounds what an answer produces, never which facts it
 owes". Those two clauses only coexist if something states the floor, and
 until now nothing did: an agent economizing on production had no way to tell

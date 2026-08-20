@@ -72,9 +72,9 @@ Important constraints:
 
 ## Shared-core product architecture
 
-The distributable surface uses recap and a thin update loop with local state. The owner surface may later add research or source context, but both use the same mechanical engine, thesis schema, session lifecycle, and card contract.
+The distributable surface uses recap and a thin update loop with local state. Research, explicit candidate discovery, and source-backed recommendations may run with or without that state; both surfaces use the same mechanical engine, thesis schema, session lifecycle, and card contract whenever they make portfolio-derived claims.
 
-Selection and research features remain outside the public coaching boundary. Feature flags may restrict a surface, but no shared engine path should emit a security recommendation.
+As of #827, selection and research are inside the public decision-support boundary. A shared engine path still does not invent a recommendation: deterministic portfolio consequences come from the engine, while a recommendation is an explicitly labelled agent judgment with support, uncertainty, and provenance.
 
 ## Absorbed capabilities
 

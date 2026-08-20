@@ -1,0 +1,27 @@
+{
+  "version": "v2",
+  "locale": "zh-CN",
+  "split": "holdout",
+  "prompts": [
+    {"id":"v2-zh-CN-hold-dec-01","class":"named_security_decision","text":"CrowdStrike 最近大跌后适合开始建仓，还是应该避开？","note":"独立创作的点名证券进场或回避决策。"},
+    {"id":"v2-zh-CN-hold-dec-02","class":"named_security_decision","text":"我在重新评估 Shopify，它的业务值得我再持有一个周期吗？","note":"通过经营证据提出点名证券持有决策。"},
+    {"id":"v2-zh-CN-hold-dec-03","class":"named_security_decision","text":"这个月的投资额放在博通还是现金更合适？","note":"无需已记录账本的点名证券配置选择。"},
+    {"id":"v2-zh-CN-hold-dec-04","class":"named_security_decision","text":"以两年为期限，Palantir 现在是否贵到不该买？","note":"带期限的点名证券估值决策。"},
+    {"id":"v2-zh-CN-hold-dec-05","class":"named_security_decision","text":"考虑到地缘政治风险，我还应该继续定投台积电吗？","note":"点名证券继续或停止决策。"},
+    {"id":"v2-zh-CN-hold-dec-06","class":"named_security_decision","text":"我可能卖掉 Adobe 去支持另一个想法，先卖 Adobe 是正确选择吗？","note":"点名证券卖出决策，不要求虚构组合事实。"},
+
+    {"id":"v2-zh-CN-hold-dis-01","class":"candidate_discovery","text":"搜索受益于电网现代化的上市公司，并缩小到最有说服力的投资候选。","note":"独立主题发现与筛选。"},
+    {"id":"v2-zh-CN-hold-dis-02","class":"candidate_discovery","text":"我想投资减肥药供应链，哪些上市公司值得进一步比较？","note":"从投资主题明确要求发现候选。"},
+    {"id":"v2-zh-CN-hold-dis-03","class":"candidate_discovery","text":"找一些大型科技股以外、能让成长观察清单更分散的优质公司，再选出前几名。","note":"开放范围的发现与排名。"},
+    {"id":"v2-zh-CN-hold-dis-04","class":"candidate_discovery","text":"数据中心电力需求主题中，哪些上市的卖铲人标的最可信？","note":"以可投资标的形式提出候选搜索。"},
+    {"id":"v2-zh-CN-hold-dis-05","class":"candidate_discovery","text":"能否找出两三家适合长期持有的日本上市自动化龙头？","note":"带地区和期限的候选发现。"},
+    {"id":"v2-zh-CN-hold-dis-06","class":"candidate_discovery","text":"推荐一组可研究的低负债股息成长股，比较后选出领先者。","note":"发现、比较和选择请求。"},
+
+    {"id":"v2-zh-CN-hold-neg-01","class":"adjacent_negative","text":"如何从现金流量表计算自由现金流？","note":"纯会计教育。","near_miss_of":"named_security_decision"},
+    {"id":"v2-zh-CN-hold-neg-02","class":"adjacent_negative","text":"请给出苹果最近一个财季公布的营收，并标明来源日期。","note":"点名证券的事实查询，没有决策。","near_miss_of":"named_security_decision"},
+    {"id":"v2-zh-CN-hold-neg-03","class":"adjacent_negative","text":"SOXX ETF 今天有哪些持仓代码？只返回持仓名单。","note":"外形像候选清单，但没有选择意图。","near_miss_of":"candidate_discovery"},
+    {"id":"v2-zh-CN-hold-neg-04","class":"adjacent_negative","text":"按去年产量列出最大的上市铜矿商，不要评价它们。","note":"类似发现的事实请求，并明确排除评估。","near_miss_of":"candidate_discovery"},
+    {"id":"v2-zh-CN-hold-neg-05","class":"adjacent_negative","text":"为什么利率上升时债券价格可能下跌？","note":"一般市场教育。","near_miss_of":"general"},
+    {"id":"v2-zh-CN-hold-neg-06","class":"adjacent_negative","text":"VIX 指数现在是多少？","note":"仅一般市场数据查询。","near_miss_of":"general"}
+  ]
+}

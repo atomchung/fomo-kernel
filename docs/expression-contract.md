@@ -47,9 +47,9 @@ Out of scope here, and unchanged by this file:
   [output-contract.md](output-contract.md) for the card, the route reference
   for every other surface.
 - **Which language it is said in.** [output-language.md](output-language.md).
-- **Brevity as an effort ceiling.** `freeform-answers.md` rule 1 bounds what an
-  answer *produces*. Nothing here licenses dropping a fact to satisfy a line
-  cap; see D5.
+- **Text-first as a default.** `freeform-answers.md` starts simple questions
+  cheaply without limiting relevant research, tools, or presentation. Nothing
+  here licenses dropping a fact to satisfy a style preference; see D5.
 
 ## 3. Disclosure relevance (D1–D6)
 
@@ -162,8 +162,9 @@ A looked-up fact states where it came from and when, in a few words beside the
 claim — the Reuters house form ("Reuters data"), not a citation apparatus.
 Full provenance fields belong in structured payloads, never in prose.
 
-At most three sources for one statement; past that, the statement is doing too
-much work. (ALCE measured no gain beyond three.)
+Use the minimum sufficient sources for the claim and its material coverage.
+Additional sources earn their place by resolving a contradiction or widening a
+stated search universe, not by citation volume alone.
 
 ### C3 — common knowledge is not sourced
 
@@ -192,8 +193,8 @@ them may restate, narrow, or contradict V/D/C.
 |---|---|---|
 | Review card | [output-contract.md](output-contract.md) | Keynote + four blocks, module prerequisites, which block the footnote ends. |
 | `consider` | `references/trade-consequence.md` | Salience order, answer slots, what the payload means. |
-| Freeform answers | `references/freeform-answers.md` | The effort ceiling, the named chart set, the positions view's shape. |
-| No recorded book | `references/decision-framing.md` | The three questions, the strategy-class map, the invitation set. |
+| Freeform answers | `references/freeform-answers.md` | Text-first defaults, proportionate production, reusable engine-backed views. |
+| No recorded book | `references/decision-framing.md` | Claim boundaries, question heuristics, the strategy-class map, the invitation set. |
 | Weekly market read | `references/weekly-market-read.md` | What the prototype reads, and what it may not invoke. |
 
 ## 6. Enforcement

@@ -194,11 +194,10 @@ SUITES = [
     # loop this operationalizes had accumulated zero records while it depended
     # on whoever remembered (the #368 lesson, applied one layer up).
     ("Question-episode bank, mechanical half (#417)", "evals/run_episodes.py", "qa-eval"),
-    # `qa-eval` because it probes `evals/triggers/run_triggers.py`, the scorer
-    # for a billable measurement run the owner schedules separately. It never
-    # runs a host and asserts nothing about how a real session is routed --
-    # what is under test is the instrument, not the thing it measures.
-    ("Trigger matrix corpus and scorer (#458)", "tests/test_triggers.py", "qa-eval"),
+    # `qa-eval` because it probes the current #827 v2 corpus/scorer, not a
+    # product runtime path. Host attempts remain opt-in and billable; the
+    # default suite validates the versioned instrument and fail-closed gate.
+    ("Decision-lane trigger corpus v2 (#827)", "tests/test_triggers.py", "qa-eval"),
     # #368: the sweep used to be a prose maintainer rule ("if the engine
     # changed, run the persona sweep") — i.e. enforced by whoever remembered.
     # It renders every persona x locale x decision variant in about the time

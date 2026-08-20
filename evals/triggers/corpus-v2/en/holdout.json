@@ -1,0 +1,27 @@
+{
+  "version": "v2",
+  "locale": "en",
+  "split": "holdout",
+  "prompts": [
+    {"id":"v2-en-hold-dec-01","class":"named_security_decision","text":"Would you start a position in CrowdStrike after the recent selloff, or stay away?","note":"Fresh named-security enter-or-avoid decision."},
+    {"id":"v2-en-hold-dec-02","class":"named_security_decision","text":"I am reconsidering Shopify. Does the business justify holding it through another cycle?","note":"Named-security hold decision framed through business evidence."},
+    {"id":"v2-en-hold-dec-03","class":"named_security_decision","text":"Between Broadcom and cash, where would you put this month's investment contribution?","note":"Named-security allocation choice; no recorded book required."},
+    {"id":"v2-en-hold-dec-04","class":"named_security_decision","text":"Has Palantir become too expensive for me to buy with a two-year horizon?","note":"Named-security valuation decision with horizon."},
+    {"id":"v2-en-hold-dec-05","class":"named_security_decision","text":"Should I keep dollar-cost averaging into TSMC despite the geopolitical risk?","note":"Named-security continue-or-stop decision."},
+    {"id":"v2-en-hold-dec-06","class":"named_security_decision","text":"I may sell my Adobe shares to fund another idea. Is selling Adobe the right first move?","note":"Named-security sell decision without asking for invented book facts."},
+
+    {"id":"v2-en-hold-dis-01","class":"candidate_discovery","text":"Search for listed companies benefiting from grid modernization and narrow them to the strongest investment candidates.","note":"Fresh thematic discovery plus narrowing."},
+    {"id":"v2-en-hold-dis-02","class":"candidate_discovery","text":"I want exposure to obesity-drug supply chains. Which public companies deserve a closer investment comparison?","note":"Explicit discovery from an investment theme."},
+    {"id":"v2-en-hold-dis-03","class":"candidate_discovery","text":"Find quality businesses outside big tech that could diversify a growth watchlist, then rank the best few.","note":"Open-universe discovery and ranking."},
+    {"id":"v2-en-hold-dis-04","class":"candidate_discovery","text":"What are the most credible listed picks-and-shovels plays for data-center power demand?","note":"Candidate search expressed as investable plays."},
+    {"id":"v2-en-hold-dis-05","class":"candidate_discovery","text":"Can you identify two or three Japan-listed automation leaders suitable for a long holding period?","note":"Regional candidate discovery with horizon."},
+    {"id":"v2-en-hold-dis-06","class":"candidate_discovery","text":"Suggest a researchable set of low-debt dividend growers; compare them and choose a front-runner.","note":"Discovery, comparison, and selection request."},
+
+    {"id":"v2-en-hold-neg-01","class":"adjacent_negative","text":"How is free cash flow calculated from a cash-flow statement?","note":"Pure accounting education.","near_miss_of":"named_security_decision"},
+    {"id":"v2-en-hold-neg-02","class":"adjacent_negative","text":"Show me Apple's reported revenue for its latest fiscal quarter, with the source date.","note":"Named-security factual lookup without a decision.","near_miss_of":"named_security_decision"},
+    {"id":"v2-en-hold-neg-03","class":"adjacent_negative","text":"Which tickers make up the SOXX ETF today? Please return the holdings list only.","note":"Candidate-shaped list lookup with no selection intent.","near_miss_of":"candidate_discovery"},
+    {"id":"v2-en-hold-neg-04","class":"adjacent_negative","text":"Name the largest publicly traded copper producers by last year's output; do not evaluate them.","note":"Discovery-like fact request that explicitly excludes evaluation.","near_miss_of":"candidate_discovery"},
+    {"id":"v2-en-hold-neg-05","class":"adjacent_negative","text":"Why can bond prices fall when interest rates rise?","note":"General market education.","near_miss_of":"general"},
+    {"id":"v2-en-hold-neg-06","class":"adjacent_negative","text":"What is the current value of the VIX index?","note":"General market-data lookup only.","near_miss_of":"general"}
+  ]
+}

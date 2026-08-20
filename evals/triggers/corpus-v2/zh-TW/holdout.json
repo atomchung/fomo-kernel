@@ -1,0 +1,27 @@
+{
+  "version": "v2",
+  "locale": "zh-TW",
+  "split": "holdout",
+  "prompts": [
+    {"id":"v2-zh-TW-hold-dec-01","class":"named_security_decision","text":"CrowdStrike 最近重挫後適合開始建倉，還是先避開？","note":"獨立創作的點名證券進場或迴避決策。"},
+    {"id":"v2-zh-TW-hold-dec-02","class":"named_security_decision","text":"我正重新評估 Shopify，它的業務值得再抱一個景氣循環嗎？","note":"透過營運證據提出點名證券持有決策。"},
+    {"id":"v2-zh-TW-hold-dec-03","class":"named_security_decision","text":"這個月的投資款放在 Broadcom 還是現金比較好？","note":"不需要已記錄帳本的點名證券配置選擇。"},
+    {"id":"v2-zh-TW-hold-dec-04","class":"named_security_decision","text":"以兩年為期，Palantir 現在是否貴到不該買？","note":"帶期限的點名證券估值決策。"},
+    {"id":"v2-zh-TW-hold-dec-05","class":"named_security_decision","text":"考量地緣政治風險，我還該繼續定期買進台積電嗎？","note":"點名證券繼續或停止決策。"},
+    {"id":"v2-zh-TW-hold-dec-06","class":"named_security_decision","text":"我可能賣掉 Adobe 去支持另一個想法，先賣 Adobe 是對的嗎？","note":"點名證券賣出決策，不要求虛構組合事實。"},
+
+    {"id":"v2-zh-TW-hold-dis-01","class":"candidate_discovery","text":"搜尋受惠於電網現代化的上市公司，並縮小到最有說服力的投資候選。","note":"獨立主題發掘與篩選。"},
+    {"id":"v2-zh-TW-hold-dis-02","class":"candidate_discovery","text":"我想布局減重藥物供應鏈，哪些上市公司值得進一步比較？","note":"從投資主題明確要求發掘候選。"},
+    {"id":"v2-zh-TW-hold-dis-03","class":"candidate_discovery","text":"找一些大型科技股以外、能讓成長觀察名單更分散的優質公司，再選出前幾名。","note":"開放範圍的發掘與排名。"},
+    {"id":"v2-zh-TW-hold-dis-04","class":"candidate_discovery","text":"資料中心電力需求題材中，哪些上市的賣鏟人標的最可信？","note":"以可投資標的形式提出候選搜尋。"},
+    {"id":"v2-zh-TW-hold-dis-05","class":"candidate_discovery","text":"能否找出兩三家適合長期持有的日本上市自動化龍頭？","note":"帶地區與期限的候選發掘。"},
+    {"id":"v2-zh-TW-hold-dis-06","class":"candidate_discovery","text":"推薦一組可研究的低負債股息成長股，比較後選出領先者。","note":"發掘、比較與選擇請求。"},
+
+    {"id":"v2-zh-TW-hold-neg-01","class":"adjacent_negative","text":"如何從現金流量表計算自由現金流？","note":"純會計教育。","near_miss_of":"named_security_decision"},
+    {"id":"v2-zh-TW-hold-neg-02","class":"adjacent_negative","text":"請給我 Apple 最近一季公布的營收，並標註來源日期。","note":"點名證券的事實查詢，沒有決策。","near_miss_of":"named_security_decision"},
+    {"id":"v2-zh-TW-hold-neg-03","class":"adjacent_negative","text":"SOXX ETF 今天有哪些持股代號？只回傳持股名單。","note":"外形像候選清單，但沒有選擇意圖。","near_miss_of":"candidate_discovery"},
+    {"id":"v2-zh-TW-hold-neg-04","class":"adjacent_negative","text":"依去年產量列出最大的上市銅礦商，不要評價它們。","note":"類似發掘的事實請求，並明確排除評估。","near_miss_of":"candidate_discovery"},
+    {"id":"v2-zh-TW-hold-neg-05","class":"adjacent_negative","text":"為什麼利率上升時債券價格可能下跌？","note":"一般市場教育。","near_miss_of":"general"},
+    {"id":"v2-zh-TW-hold-neg-06","class":"adjacent_negative","text":"VIX 指數目前是多少？","note":"僅一般市場資料查詢。","near_miss_of":"general"}
+  ]
+}

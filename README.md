@@ -56,7 +56,7 @@ A review shows the complete card in the conversation before asking you to choose
 
 ### 5. Recommendation is explicit; execution state stays honest
 
-For a contemplated trade weighed against a recorded portfolio, FOMO Kernel can recommend or rank user-named and recorded-book candidates. It never calls a consideration executed, and it does not issue a price target or market forecast.
+With or without a recorded portfolio, FOMO Kernel can research, discover, compare, recommend, or rank candidates when you ask for a decision. A recorded book is required only for computed portfolio consequences such as weight, cash impact, or rule collisions. It never calls a consideration executed; any target or forecast is labelled as judgment with its assumptions and uncertainty, never as an engine fact or certainty.
 
 For a review, you may choose one proposed rule, write your own, or skip. The product does not manufacture a commitment merely to complete the flow.
 
@@ -233,12 +233,12 @@ Claude Code is the most complete experience: native option controls and inline c
 
 FOMO Kernel does not:
 
-- issue price targets or market forecasts;
-- select stocks for you;
+- present a price target or market forecast as a known fact or certainty;
+- claim that candidate discovery exhaustively screened the market;
 - make or execute the final buy/sell decision;
 - become a broker, wealth manager, or full investment operating system;
 - crawl or mirror your private research repository;
-- replace missing portfolio facts with generic advice.
+- replace missing portfolio facts with invented portfolio numbers.
 
 It is research and decision-coaching support, not investment advice. You remain responsible for every investment decision and outcome.
 

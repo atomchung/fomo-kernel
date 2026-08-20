@@ -236,16 +236,16 @@ grounded support rather than to refuse.
 
 Split the current non-goal in two:
 
-- **Security recommendations — lifted for bounded candidates.** A recommendation
-  is admissible when it carries the engine-computed consequence for that user's
-  book and per-claim provenance. The agent may rank candidates named by the
-  user or already present in the recorded book. Open-ended discovery remains
-  outside this route. Ephemeral comparison rows are not persisted; the selected
-  or still-live candidate is rerun persistently so the decision that matters is
-  recorded.
-- **Market forecasts — kept as a non-goal.** "This position takes your
+- **Security recommendations and discovery — allowed at the inquiry layer.** A
+  recommendation may rest on sourced public facts and labelled agent judgment
+  with or without a book. Explicit discovery reports its universe, filters,
+  as-of date, material exclusions, and never claims exhaustive coverage. When a
+  portfolio consequence matters, each candidate is evaluated ephemerally and
+  only the selected or still-live candidate is rerun persistently.
+- **Market forecasts — judgment, never engine fact.** "This position takes your
   semiconductor exposure to 48%" is anchored in the user's record and checkable
-  now. "NVDA reaches $250" has no engine support and no falsification date.
+  now. "NVDA reaches $250" is a forecast and must carry assumptions,
+  uncertainty, and a falsification horizon; it cannot borrow engine authority.
 
   This line leaks and the leak should be stated rather than papered over: any
   buy recommendation implicitly forecasts that the instrument's risk-adjusted

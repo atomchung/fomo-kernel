@@ -129,7 +129,7 @@
           "condition_integrity",
           "condition_check_integrity",
           "usable_facts_grounding",
-          "single_candidate_refusal_shape"
+          "single_candidate_integrity"
         ]
       },
       "description": "The mechanical validators that bear on this episode. Every one is an invariant — none compares an answer against the wording the product ships today. A declared check with nothing to inspect fails the episode. An empty list is the honest `unmapped` state and requires blocked_on."
@@ -176,8 +176,8 @@
     "refusal": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "premise", "reason", "why_now", "countercondition", "next_input"],
-      "description": "Synthetic-only input for #674's single-proposed-trade refusal witness. It is episode metadata, never a runtime response plan or persisted product object.",
+      "required": ["kind", "premise", "reason", "why_now"],
+      "description": "Synthetic-only input for #674/#827's single-proposed-trade integrity witness. It is episode metadata, never a runtime response plan or persisted product object.",
       "properties": {
         "kind": {"const": "single_candidate"},
         "premise": {"type": "string", "minLength": 1},
@@ -231,10 +231,6 @@
               "type": "string"
             },
             "description": "Rubric axes this answer must fail, drawn from the episode's own judge.axes. Absent means the answer is expected to pass every declared axis. Independent of `expect`/`fails`, which are the mechanical half: an answer can be mechanically clean and still fail an axis, and that is the whole reason the judge exists."
-          },
-          "refusal_outcome": {
-            "enum": ["safe_tension", "unavailable"],
-            "description": "#674 single-candidate witness branch. It classifies the fixture's safe-tension versus no-safe-value answer; it is never product state."
           },
           "prose": {
             "type": "string",
