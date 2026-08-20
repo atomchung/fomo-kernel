@@ -299,7 +299,7 @@ Under maintainer QA, delivery of these obligations is proven rather than assumed
 
 Apply the global [expression contract](../../../docs/expression-contract.md):
 voice through the [output-voice contract](../../../docs/output-voice.md)
-(V1–V9), disclosure placement through D1–D6, provenance labelling through
+(V1–V9), disclosure relevance and placement through D1–D7, provenance labelling through
 C1–C4. Those own how this answer speaks; this section owns only the `consider`
 route's salience facts and answer slots.
 

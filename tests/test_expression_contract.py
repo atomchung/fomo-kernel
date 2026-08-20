@@ -49,8 +49,13 @@ SURFACES = {
     REFERENCES / "weekly-market-read.md": "weekly market read",
 }
 
-DISCLOSURE_IDS = tuple(f"D{number}" for number in range(1, 7))
+DISCLOSURE_IDS = tuple(f"D{number}" for number in range(1, 8))
 CITATION_IDS = tuple(f"C{number}" for number in range(1, 5))
+# The rules whose table row must keep declaring that nothing mechanical
+# decides them. D7 is deliberately not on this list: its bottom floor -- a
+# machine anchor rendered at a person -- really is decided by E-6, and the
+# table names that oracle rather than claiming the whole rule is checked.
+INSTRUCTION_ONLY_IDS = tuple(f"D{number}" for number in range(1, 7)) + ("C3",)
 ROW_RE = re.compile(r"^\|\s*([DC]\d+)\s*\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|$", re.M)
 
 def _load_checker():
@@ -104,10 +109,20 @@ def test_unverified_rules_are_declared_unverified():
     coverage it lacks is the structural-gate failure this repository has
     shipped before."""
     rows = {row[0]: (row[2], row[3]) for row in _rows(CONTRACT.read_text(encoding="utf-8"))}
-    for rule_id in DISCLOSURE_IDS + ("C3",):
+    for rule_id in INSTRUCTION_ONLY_IDS:
         verification, oracle = rows[rule_id]
         assert verification == "instruction only", f"{rule_id} claims {verification!r}"
         assert oracle == "—", f"{rule_id} names oracle {oracle!r} for an unverified rule"
+    # The other direction, for the one D rule that does claim a mechanical
+    # half: a named oracle that stops existing is a claim of coverage this
+    # repository has shipped before, and it must not be checkable only by
+    # reading the table.
+    verification, oracle = rows["D7"]
+    assert verification != "instruction only" and oracle != "—", (
+        "D7 declares a mechanical half; the table must name which half and whose oracle")
+    assert "E-6" in oracle, oracle
+    assert "E-6" in _load_checker().ASSERTIONS, (
+        "the contract names E-6 as D7's oracle and the checker does not run it")
 
 
 # ───────────────────────── 2. every surface routes here ─────────────────────────

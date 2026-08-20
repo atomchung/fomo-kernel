@@ -25,7 +25,7 @@ when it could change the recommendation or unlock the portfolio claim.
 
 Apply the global [expression contract](../../../docs/expression-contract.md):
 voice through the [output-voice contract](../../../docs/output-voice.md)
-(V1–V9), disclosure placement through D1–D6, provenance labelling through
+(V1–V9), disclosure relevance and placement through D1–D7, provenance labelling through
 C1–C4. They own universal output semantics; this reference owns the no-book
 facts, questions, and route order below.
 

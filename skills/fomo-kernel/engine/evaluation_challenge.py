@@ -49,9 +49,9 @@ still fails.
 
 Three lists, not one (#830)
 ---------------------------
-Owner ruling, 2026-08-20: 「什麼東西是一定要的，什麼東西是不必須的……沒有辦法
-說出一定要理由就全部刪掉」 — audit the obligation inventory and delete anything
-whose must-have reason cannot be stated. The audit's exhibit A was
+Owner ruling, 2026-08-20: separate what is genuinely required from what is
+not, and delete everything whose must-have reason cannot be stated. Audit the
+obligation inventory itself rather than pricing its output. The audit's exhibit A was
 ``basis.state_version``, a content hash sitting on the list of facts a human
 answer owes. A whitelist of roughly fifteen owed facts has one cheapest
 discharge — one sentence per item — so the wall of tables the owner could
@@ -101,7 +101,7 @@ satisfy a checker — the "eval must not pin current wording" failure this
 repository has already shipped once.
 
 Everything else here — that the user's exact words are quoted rather than
-paraphrased, that the unchecked list is spoken aloud — reaches the user
+paraphrased, that a material gap earns its one line — reaches the user
 through the agent, and nothing offline can observe whether it arrived. That
 is the same instruction-only footing ``docs/development-guide.md`` section 4
 already admits for the recommendation ban and ``freeform-answers.md`` admits
@@ -193,8 +193,9 @@ TOPICS = ("basis", "price_basis", "position",
 
 # Computed every call, owed on no call (#830). These are the two families the
 # owner audit found being recited as a standing sermon: the concentration
-# readings ("那條線是系統預設，不是你的" was written by both arms of the #827
-# A/B, which is what obligation discharge sounds like) and the cash line.
+# readings (both arms of the #827 A/B independently wrote the same sentence,
+# that the line is a system default and not the user's own, which is what
+# obligation discharge sounds like) and the cash line.
 # They are emitted so an answer can reach for them the moment the decision
 # turns on one, and they carry no default obligation to appear.
 #
@@ -517,9 +518,9 @@ def _concentration_entries(record, consequence):
     listing it would pad the floor with non-events.
 
     A `may_state` family since #830. These readings were owed on every
-    answer, and the owner's verdict on the result was 「第一大段完全沒有意
-    義」: a book whose concentration did not move still got a paragraph
-    about concentration. They are computed and offered; the answer states
+    answer, and the owner's verdict on the result was that the first large block
+    of the answer meant nothing: a book whose concentration did not move still
+    got a paragraph about concentration. They are computed and offered; the answer states
     one when it is the fact that decides this call, or when it touches a
     line the user wrote — and that second case is not left to judgment,
     because `rule_effects` carries it and `required_coverage` enforces

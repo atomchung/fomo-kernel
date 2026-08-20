@@ -222,7 +222,7 @@ Cadence tiers (#237, wired by #277, all five sub-decisions now ruled):
 > reasoning; the rule below is current.
 >
 > **Placement itself is no longer this file's rule.**
-> [expression-contract.md](expression-contract.md) D1–D6 owns it for every
+> [expression-contract.md](expression-contract.md) D1–D7 owns it for every
 > surface, generalizing the 2026-07-22 ruling below product-wide (#823). What
 > stays here is the card's own layout answer to D1's question — *which* block
 > the disclosures sit at the end of — and the card-specific selection rules

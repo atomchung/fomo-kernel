@@ -28,11 +28,11 @@ The payload is the authority for portfolio facts. External research is optional 
 
 - `evaluation.consequence` — the book `before` and `after` the trade, and the `delta`: weights, largest position, top three, sector and AI share, cash. Also `disclosures`, and the holdings the numbers were measured *without*.
 - `evaluation.rule_collisions` — the user's own rules this trade touches, each with the `rule_effect` naming how it moves.
-- `challenge` — computed for this call: `must_state` (portfolio facts the answer owes, each with its `anchor`), `rule_effects` (with `must_convey` / `must_not_convey` per rule), `quote_verbatim` (the user's own words, never relabeled as an outside source), `unchecked` (available research dimensions; surface only those material to the recommendation), and `case_required`.
-- `disclosures_display` — each disclosure already written as a sentence in the user's language. Use it rather than translating a key.
+- `challenge` — this call's `must_state` (facts the answer owes, with `anchor`s), `may_state` (owed on no call — state one only when it decides this call), `machine_state` (machines only, never rendered), `rule_effects` (`must_convey` / `must_not_convey` per rule), `quote_verbatim` (the user's own words, never relabeled as an outside source), `unchecked` (never enumerated), and `case_required`.
+- `disclosures_display` — each disclosure as a sentence in the user's language. Use it as an end-block line rather than translating a key.
 - `prior_decision` — present only when the user already resolved one earlier consideration of this same ticker: their own stored words, and what they reported doing about it, never proof they did it. Use `prior_decision` only when it changes the current lead judgment, evidence requirement, process action, or a decision-changing question; otherwise ignore it.
 
-Read portfolio consequence from that payload; never recompute or fill its gaps. An absent portfolio-derived number stays out. Public numbers need source and as-of; numeric forecasts need labelled assumptions and uncertainty. Neither substitutes for portfolio fact.
+Read portfolio consequence from that payload; never recompute or fill its gaps. An absent portfolio-derived number stays out. Public numbers need source and as-of, and neither they nor a forecast substitutes for portfolio fact.
 
 ## Research only what could change the recommendation
 
@@ -40,11 +40,9 @@ The engine computes portfolio consequence; it is not a company-research service.
 
 ## Shape of the answer
 
-1. **Lead with the recommendation.** Say what to do and the reason that decides it. This may be proceed, choose one candidate, resize, reduce a named recorded position, delay, collect evidence, revise, cancel, or no trade.
-2. **Support it with the few facts that carry the decision.** State a counter-case only when it could materially change the action; symmetry is not a requirement.
-3. **State only material limitations.** Keep a truth-critical denominator, unit, or pricing set beside its number; place any other material evidence gap where it makes the recommendation clearest. Do not dump every unchecked dimension.
-4. **Ask only decision-changing questions.** There is no universal count or required placement. If no answer could change the recommendation, ask nothing.
-5. **Stop.** Do not append a mandatory workflow or resolution sentence.
+Answer in the reader's own order — what they asked, the answer, why, what would overturn it, what to do — not the payload's field order. Say what this decision needs, not what exists. Open on the stance and the reason that decides it: proceed, resize, delay, collect evidence, choose one candidate, or no trade. Carry the one or two numbers that would flip it, and every `rule_effects` entry, which is never optional. Give a directional call a falsifier — that is the counter-case, and it needs no section. Ask only decision-changing questions, then stop.
+
+**A fact lives on exactly one floor; twice is a bug** — deciding facts in the body, a truth-critical denominator, unit, or pricing set beside its number, other material limitations in one compact end block, machine anchors and engine narration nowhere. `references/trade-consequence.md` holds the rest.
 
 Label your thesis, valuation, timing, forecast, recommendation, ranking, or selection as judgment, separate from engine facts. Give a target or forecast's material assumptions and uncertainty; never disguise it as fact or certainty. Never claim what the user did or will do.
 
@@ -56,8 +54,6 @@ from those results plus sourced research, then rerun only the user-selected or
 still-live candidate without the flag. Rejected candidates leave no canonical
 evaluation row.
 
-Nothing about the engine, schemas, sessions, validators, retries, or this contract belongs in the answer.
-
 ## What the response may ask you for
 
 - **Unpriced instruments.** The payload says how to return them. Read closes from the publisher's page, transcribe the `references/price-feed.md` envelope, and rerun with `--prices <path>`. If none are published, `--prices-unavailable '<sources checked>'` refuses only the current-value portfolio consequence; still give supported non-portfolio judgment. Never invent, interpolate, or recall a price; missing is not delisted or zero.
@@ -67,7 +63,7 @@ A refusal does not end the turn. You still owe the judgment that holds without t
 
 ## After the answer
 
-Persistent `consider` records the evaluation; `consider --ephemeral` does not. When the user later says what they did, record it against the persistent evaluation rather than starting a new one:
+Persistent `consider` records the evaluation; `consider --ephemeral` does not. Say once that a record is a consideration, not an execution. When the user later says what they did, record it against the persistent evaluation rather than starting a new one:
 
 ```bash
 python3 engine/review.py consider --resolve <evaluation_id> --decision acted|declined|modified

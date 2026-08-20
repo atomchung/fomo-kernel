@@ -26,7 +26,7 @@ Three registries live here:
 | Series | Owns | Where the rules are |
 |---|---|---|
 | **V1–V9** | Voice: what an answer leads with, what it may not manufacture, when it stops. | [output-voice.md](output-voice.md) — routed, never copied. |
-| **D1–D6** | Disclosure relevance: what materially qualifies a claim, without a fixed answer template. | §3 below. |
+| **D1–D7** | Disclosure relevance and placement: what materially qualifies a claim, and which floor it lives on. | §3 below. |
 | **C1–C4** | Citation and provenance: how a claim says where it came from. | §4 below. |
 
 Voice stays in its own file rather than being folded in here because V1–V9 are
@@ -41,8 +41,21 @@ authority, which is the failure this file is against. Routing them is what
 Out of scope here, and unchanged by this file:
 
 - **Which facts an answer owes.** That is computed per route — the card's
-  `build_honesty_ledger()`, `consider`'s `challenge` block. Expression governs
-  where an owed fact is said, never whether it is owed.
+  `build_honesty_ledger()`, `consider`'s `challenge` block. Whether a fact is
+  owed is decided upstream and expression never overrules it.
+
+  What expression *does* own, and did not before #830, is the **distribution**
+  of what gets said: which floor each fact lives on — opening body,
+  parenthetical beside its number, one line in the end block, or not rendered
+  at all — and therefore how much of the answer any one obligation is entitled
+  to. The pre-#830 wording ("expression governs where an owed fact is said,
+  never whether it is owed") was read as a disclaimer of volume, and nothing
+  else claimed it: no rule anywhere governed how much an answer said. So every
+  owed fact landed in body prose as its own sentence, and a fifteen-item
+  obligation list became a fifteen-sentence answer. D7 is the rule that was
+  missing. It cannot license dropping an owed fact — a fact whose floor is the
+  end block is still said — and the route's own obligation list is still the
+  authority on which facts those are.
 - **What a surface renders.** Block order, module prerequisites, field sets:
   [output-contract.md](output-contract.md) for the card, the route reference
   for every other surface.
@@ -51,7 +64,7 @@ Out of scope here, and unchanged by this file:
   cheaply without limiting relevant research, tools, or presentation. Nothing
   here licenses dropping a fact to satisfy a style preference; see D5.
 
-## 3. Disclosure relevance (D1–D6)
+## 3. Disclosure relevance and placement (D1–D7)
 
 A disclosure is a sentence about the *limits* of what was just said: the book
 it was measured on, the session it was priced at, the part of the denominator
@@ -66,6 +79,7 @@ a fact the user asked for.
 | D4 | Relevance-based: only what could change or qualify the recommendation | instruction only | — |
 | D5 | Brevity follows salience, not a numeric line cap | instruction only | — |
 | D6 | State each material limitation once | instruction only | — |
+| D7 | A fact lives on exactly one floor | deterministic fixture on the machine-anchor floor; instruction elsewhere | `expression_oracle` (E-6) |
 
 D1–D6 carry no mechanical oracle and the table says so rather than implying
 one. Deciding whether a limitation is material, where it reads most clearly,
@@ -75,6 +89,10 @@ answer means, which is the boundary
 The retired E-1–E-4 checker proved only block position, prefix, line count, and
 literal duplication. It could not prove relevance or clarity, so Issue #825
 deleted it rather than treating answer formatting as product integrity.
+
+D7 declares the same split honestly: only its bottom floor — a machine anchor
+rendered at a person — is a thing a regex can decide, and that is the only half
+E-6 claims.
 
 ### D1 — put a material limitation where it is clearest
 
@@ -128,6 +146,39 @@ by decision value, not by satisfying a formatter.
 
 Across the whole answer, state a material limitation once. This is a semantic
 instruction, not a literal-string deduplication gate.
+
+### D7 — a fact lives on exactly one floor
+
+Owner ruling, 2026-08-20 ([#830](https://github.com/atomchung/fomo-kernel/issues/830)).
+D1–D6 say *whether* a limitation is worth saying and leave every one of them
+free to land in body prose. That is how a fifteen-item obligation list became
+a fifteen-sentence answer while every rule above stayed satisfied. D7 is the
+missing half: each fact has one floor, and appearing on two is a bug.
+
+| Floor | What lives there | Form |
+|---|---|---|
+| **Opening body** | The facts that decide this call: the stance, the reason it wins, the one or two numbers that would flip it. | Ordinary prose. |
+| **Parenthetical beside its number** | A truth-critical qualifier — denominator, unit, or pricing set, exactly D2's enumeration. | Inside the sentence that carries the number. |
+| **One end block** | Sources, caliber, and material gaps: which book, which session, what was not checked. | One line each, non-narrative, collected once at the end. |
+| **Not rendered** | Machine anchors: content hashes, state versions, validator detail. | Payload only. |
+
+Four consequences the surfaces below inherit:
+
+- **The end block is one block, not a running commentary.** Related caliber
+  lines merge into it; they do not each earn a paragraph beside the claim they
+  qualify. This does not reinstate the review card's footnote as a universal
+  layout — a conversational answer with nothing on that floor ends at its
+  judgment (D4), and the card keeps its own footnote as local layout.
+- **A pre-written disclosure sentence is an end-block line.** Where a route
+  hands the answer localized disclosure copy (`consider`'s
+  `disclosures_display`), it is material for that block, not a paragraph to
+  paste into the body.
+- **Nothing appears on two floors.** A qualifier that rode a body sentence is
+  finished; repeating it below is D6's duplication seen from the placement
+  side.
+- **Completeness lives in the data layer.** The route still computes
+  everything, and the user can ask for any of it at any time. Not saying a
+  number this decision does not turn on is not hiding it.
 
 ## 4. Citation and provenance (C1–C4)
 
@@ -203,14 +254,17 @@ them may restate, narrow, or contradict V/D/C.
 |---|---|---|
 | `check_card.py` S-3 | Review-card layout only: no consecutive caveat paragraphs, none before Block 1, none inside Block 1. It does not govern conversational placement. | `tests/agent/check_card.py` |
 | `check_expression.py` E-5 | C4 only: no engine payload token reaches a conversational answer. E-1–E-4 were retired by #825 because formatting is not evidence of relevance or clarity. | `tests/agent/check_expression.py` |
+| `check_expression.py` E-6 | D7's bottom floor only: no machine anchor is rendered. Matched by shape (a long hex run), not by vocabulary, so it survives a prefix rename without importing the engine. It says nothing about which floor an owed fact landed on. | `tests/agent/check_expression.py` |
+| `ux_receipt` delivery evidence | The same rule where the frozen value and the presented text are both in hand: a declared `machine_state` value appearing in the answer refuses the evidence rather than counting it. Silent on a challenge block that predates the key. | `skills/fomo-kernel/tools/ux_receipt.py` |
 | `check_voice.py` | V1–V9 witness classification. | `tests/agent/check_voice.py` |
 | `answer_provenance` | C1/C2/C4 on a structured `--agent-case`, and the coverage a case may not leave uncited — including the extent of an illegible book, not only that it is one. | `skills/fomo-kernel/engine/answer_provenance.py` |
-| `test_expression_contract.py` | That both registries are complete, every surface routes here, D1–D6 honestly declare instruction-only verification, and the C4 blacklist remains schema-derived. | `tests/test_expression_contract.py` |
+| `test_expression_contract.py` | That both registries are complete, every surface routes here, D1–D6 honestly declare instruction-only verification, the C4 blacklist remains schema-derived, and the `consider` obligation floor stays smaller than the whole computed inventory. | `tests/test_expression_contract.py` |
 
 **None of these runs against a live answer.** `check_expression.py` proves only
-the exact C4 property it can decide. D1–D6 are evaluated by reading the answer
-in context; pretending a regex covered them was the constraint failure #825
-removed. Nothing sits between the model and the user.
+the exact C4 and D7-floor properties it can decide. D1–D6, and D7's other three
+floors, are evaluated by reading the answer in context; pretending a regex
+covered them was the constraint failure #825 removed. Nothing sits between the
+model and the user.
 
 The delivery half is observed the same way every other instruction-tier rule
 in this repository is: by owner-live dogfood and by the QA receipt
@@ -226,3 +280,4 @@ letting a green suite read as a governed output.
 | 2026-08-14 | Owner ruling ([#823](https://github.com/atomchung/fomo-kernel/issues/823)): expression is abstracted out of every output surface and held across all of them. The 2026-07-22 placement ruling generalizes product-wide as D1; `decision-framing.md`'s contradicting per-claim rule is unified into D1/D2 rather than kept as a scope exception, because the rule it stated ("attached to the claim it qualifies, never grouped into a disclosure block") was written about *which limitations deserve saying at all*, and its placement clause was never the ruling anyone made. Provenance labelling is stated as the default (C1) with `--agent-case` demoted to its mechanical projection. |
 | 2026-08-14 | Line cap set at five (D5) from a measured four-line worst case, with merging — never dropping — as the remedy, so a cap can never become an argument for omitting an owed fact. |
 | 2026-08-19 | Issue #825 retires the product-wide block, prefix, and line-cap template plus E-1–E-4. Those checks proved formatting, not whether a limitation mattered. The review card keeps its footnote as local layout; conversational surfaces use relevance-driven placement. |
+| 2026-08-20 | Owner ruling ([#830](https://github.com/atomchung/fomo-kernel/issues/830)): the product is too verbose, and the fix is deletion rather than a reading budget — anything whose must-have reason cannot be stated is cut. `consider`'s obligation list splits into owed / available / never-rendered, and D7 makes volume *distribution* expression's business, which §2 had disclaimed and nothing else had claimed. The reading-budget rule proposed as V10 is demoted to a backstop and is not adopted here: a length cap is what #827 had just deleted, and re-adding one would have priced the symptom instead of removing the cause. |
