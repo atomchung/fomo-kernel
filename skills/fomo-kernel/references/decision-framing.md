@@ -1,5 +1,25 @@
 # Framing a decision when there is no recorded book
 
+## The exemplar
+
+One whole no-book answer. Every book-derived claim is refused and the answer
+still lands a stance, names the gap that decides it, and leaves the user a
+falsifier they could write down themselves. Read it before writing one.
+
+It is copied verbatim from `tests/agent/expression-witnesses.json`, scene
+`no_book_single_name` — the corpus that
+[expression-contract.md](../../../docs/expression-contract.md) §3.5 makes the
+binding statement of this shape. Every issuer in it is invented, and
+`tests/test_expression_contract.py` fails if the two copies disagree.
+
+```exemplar no_book_single_name
+WDGT 這家公司的證據支持買，但「現在進場」我不背書——缺的是估值，不是基本面。上季營收 +24%、EPS 超預期、同日上修全年（公司新聞稿，2026-07-24），這是硬的；但這些已公開三週，而我查不到現在的估值倍數，「好消息是否已在價格裡」這一半我答不了。
+
+$5,000 試水溫，真正的洞在出場：「故事變了就賣」跟你的進場理由是同一個變數，等於沒有獨立的認錯線。可檢查的替代就用它自己簽的支票：全年營收財測或毛利率轉向，擇一寫下來，就可以進場。
+
+（價 8/14 收盤 $188.20；你未提供持倉，部位佔比與重疊無法評）
+```
+
 `review.py consider` answers what a trade does to the user's own book, and it fails closed when there is no book to answer against. That refusal is correct — it protects the arithmetic — but it is not the end of the conversation. A user who has recorded nothing still arrives with a live decision, and refusing is not what earns their transaction history. Guidance is.
 
 This file is the contract for decisions made without a recorded book. The user

@@ -41,6 +41,9 @@ ENGLISH_IMPLEMENTATION_ASSETS = (
     Path("skills/fomo-kernel/evals/evals.json"),
 )
 SKILL_DIR = Path("skills/fomo-kernel")
+# #834: see exemplar_quoted_lines() for what this exempts and why.
+EXEMPLAR_CARVE_OUT_DIR = SKILL_DIR / "references"
+EXEMPLAR_FENCE = re.compile(r"^```exemplar [a-z0-9_]+$")
 AGENT_RUNTIME_SURFACES = (
     Path("AGENTS.md"),
     SKILL_DIR / "SKILL.md",
@@ -916,13 +919,63 @@ def markdown_section(text, heading):
     return text[content_start:] if next_heading < 0 else text[content_start:next_heading]
 
 
+def exemplar_quoted_lines(rel, lines):
+    """1-based line numbers holding product output quoted verbatim (#834).
+
+    The four surface references open with one canonical exemplar copied from
+    `tests/agent/expression-witnesses.json`, and three of the four are this
+    product speaking Traditional Chinese. That text is an answer, not
+    documentation prose -- the same distinction that keeps `copy/zh-TW.json`
+    out of `ENGLISH_IMPLEMENTATION_ASSETS` -- so the English-only gate skips
+    it and keeps reading every other line of the file.
+
+    The exemption is narrow in three ways at once, and widening any one of
+    them turns it into a licence for translated documentation: only under
+    `references/`, only inside a fence whose info string is `exemplar
+    <scene_id>`, and only for text `tests/test_expression_contract.py` proves
+    is the corpus copy byte for byte.
+    """
+    if EXEMPLAR_CARVE_OUT_DIR not in rel.parents:
+        return frozenset()
+    quoted, inside = set(), False
+    for number, line in enumerate(lines, 1):
+        if inside:
+            if line == "```":
+                inside = False
+            else:
+                quoted.add(number)
+        elif EXEMPLAR_FENCE.match(line):
+            inside = True
+    assert not inside, f"{rel}: an exemplar fence is never closed"
+    return frozenset(quoted)
+
+
 def test_implementation_markdown_is_english_only():
     violations = []
     for rel, path in implementation_markdown_files():
-        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if CJK.search(line):
+        lines = path.read_text(encoding="utf-8").splitlines()
+        quoted = exemplar_quoted_lines(rel, lines)
+        for line_number, line in enumerate(lines, 1):
+            if line_number not in quoted and CJK.search(line):
                 violations.append(f"{rel}:{line_number}: {line.strip()}")
     assert not violations, "Non-English text found in implementation docs:\n" + "\n".join(violations)
+
+
+def test_the_exemplar_carve_out_stays_narrow():
+    """Mutation proof for the one exemption above (#834).
+
+    The gate must still see the same Chinese line everywhere except inside a
+    tagged exemplar fence in a surface reference: in another directory, in an
+    untagged fence, and in the prose on either side of the fence.
+    """
+    rel = EXEMPLAR_CARVE_OUT_DIR / "freeform-answers.md"
+    fenced = ["# T", "", "六檔", "```exemplar freeform_positions_view", "六檔", "```", "六檔"]
+    assert exemplar_quoted_lines(rel, fenced) == {5}, \
+        "the carve-out does not cover exactly the quoted product output"
+    assert exemplar_quoted_lines(SKILL_DIR / "flows" / "first-review.md", fenced) == frozenset(), \
+        "a file outside the surface references was granted the exemption"
+    assert exemplar_quoted_lines(rel, ["```text", "六檔", "```"]) == frozenset(), \
+        "an untagged fence was read as an exemplar"
 
 
 def test_english_skill_assets_are_english_only():
@@ -1541,6 +1594,7 @@ def test_every_test_in_this_module_is_registered():
 def main():
     tests = [
         test_implementation_markdown_is_english_only,
+        test_the_exemplar_carve_out_stays_narrow,
         test_english_skill_assets_are_english_only,
         test_gtm_locale_pair_exists,
         test_readme_bash_commands_match_across_languages,
