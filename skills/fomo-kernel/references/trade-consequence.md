@@ -288,7 +288,7 @@ bullet each. `must_state`'s order is the order the facts depend on each other
 the price session next because those numbers are measured at one, the
 disclosures last because they qualify what precedes them). It is a dependency
 order and never a reading order: [the answer's own order](#answer-shape) is the
-reader's question chain, and the fact that decides the call opens it.
+pyramid's, and the fact that decides the call opens it.
 
 ### The three lists, and why each fact is on the one it is on (#830)
 
@@ -355,35 +355,40 @@ Under maintainer QA, delivery of these obligations is proven rather than assumed
 ## Route-specific synthesis
 
 Apply the global [expression contract](../../../docs/expression-contract.md):
-voice through the [output-voice contract](../../../docs/output-voice.md)
-(V1–V9), disclosure relevance and placement through D1–D7, provenance labelling through
-C1–C4. Those own how this answer speaks; this section owns only the `consider`
-route's salience facts and answer slots.
+the answer's shape through its §3 mother chapter, voice through the
+[output-voice contract](../../../docs/output-voice.md) (V1–V9), disclosure
+relevance and placement through D1–D7, provenance labelling through C1–C4.
+Those own how this answer speaks; this section owns only the `consider` route's
+salience facts and answer slots.
 
 The challenge block is the factual floor. The shape below selects the
 decision-relevant facts without turning available ones into standing copy.
 
 <a id="answer-shape"></a>
-### The reader's question chain
+### Derivation from the pyramid
 
-Arrange the answer in the order the reader would ask it, never in the payload's
-field order:
+The answer's shape is [expression contract §3](../../../docs/expression-contract.md)'s
+— one sentence on top, an increment-gated middle, the rest of the inventory
+behind a single offer, one caliber block at the end — and this file states it
+nowhere else (#832; before that, the reader's-question-chain paragraph here was
+one of six independent phrasings of the same idea).
 
-**what you asked → the answer → why → what would overturn it → what you'd do.**
-
-That is one storyline, which is V4's one lead tension applied to the whole
-answer rather than only to its opening. Payload order is a dependency order
-computed for a machine; reading it aloud is how an answer comes to open on the
-book's provenance and reach the recommendation in its last paragraph.
+Two parameters this route adds, and only these two: **which fact wins the top
+sentence** (lead selection, below) and **which blocks the middle floor may
+hold** (answer slots, below). Payload order is a dependency order computed for
+a machine; reading it aloud is how an answer comes to open on the book's
+provenance and reach the recommendation in its last paragraph, which is what
+the pyramid exists to prevent.
 
 ### Lead selection
 
 Unless a truth-critical disclosure changes how an earlier item can be understood, salience runs:
 
-1. **A user-authored rule collision** — `rule_effect` of `new_breach` or `worsened_existing_breach`. The user wrote that line themselves; this trade crossing it or digging further into it outranks everything else.
-2. **The largest non-obvious portfolio consequence** — weight, concentration or driver overlap, cash. *Non-obvious* is load-bearing: the user already knows they hold the position and that the price fell. What they cannot see from where they sit is what the trade does to the whole book's shape.
-3. **The decision-context read** — whether `why_now` looks like a real evidence delta or a price move wearing one, labelled as your judgment. [market-lookup.md](market-lookup.md) governs verifying it.
-4. **Routine basis and unchecked boundaries** — include them when they materially qualify or could reverse the recommendation. Do not append a standard tail merely because a field exists.
+1. **A funding shortfall** — a negative post-trade cash balance (#778). It outranks everything else when it occurs, because it is not a portfolio consequence at all: it says this trade cannot be done out of the recorded book, so the user is either funding it from somewhere the engine cannot see or selling something to do it. Lead with **that decision**, not with the balance and its weight. Those two numbers are owed and they are support, not the answer — an answer that recites them and then explains what the engine can and cannot see has led with the boundary, which is the exact defect #778 recorded. The boundary is still stated, once, beside the claim it qualifies (D2/D6): the engine sees the recorded book and no other account. Never assume the user has other cash, and never assume they do not.
+2. **A user-authored rule collision** — `rule_effect` of `new_breach` or `worsened_existing_breach`. The user wrote that line themselves; this trade crossing it or digging further into it outranks everything else below.
+3. **The largest non-obvious portfolio consequence** — weight, concentration or driver overlap, cash. *Non-obvious* is load-bearing: the user already knows they hold the position and that the price fell. What they cannot see from where they sit is what the trade does to the whole book's shape.
+4. **The decision-context read** — whether `why_now` looks like a real evidence delta or a price move wearing one, labelled as your judgment. [market-lookup.md](market-lookup.md) governs verifying it.
+5. **Routine basis and unchecked boundaries** — include them when they materially qualify or could reverse the recommendation. Do not append a standard tail merely because a field exists.
 
 Special cases: `improved_but_still_over` and `resolved_existing_breach` are improvements to an already-broken line, never framed as a new breach — an improvement that leaves the line crossed still leads with both truths, and one that clears it is worth saying out loud rather than passing in silence. A `partial_book` or missing-FX denominator qualifies every affected percentage in the same sentence — it is the textbook truth-critical qualifier (expression contract D2), because the number means something different without it. A stale or cost-basis book leads only when it makes the apparent consequence unreliable enough to change the decision; otherwise include it only when it materially qualifies the recommendation. With no collision, lead with the largest changed consequence; with no material change, say that the supported dimensions show little change and name only what stays materially unchecked — never convert "not measured" into "no risk".
 

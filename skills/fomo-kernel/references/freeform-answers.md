@@ -163,6 +163,14 @@ every limitation. Keep truth-critical denominator, unit, or pricing-set
 qualifiers inline. Include other limitations only when they materially qualify
 the answer; no marker or numeric line cap is required.
 
+**This route's derivation from §3 is empty, and that is the expected case**
+(#832). A freeform answer takes the pyramid exactly as it stands — one sentence
+on top, an increment-gated middle, the rest of the inventory behind one offer,
+one caliber block at the end — and adds no parameter of its own. Rule 1's
+text-first default is a **latency** preference about how much work to do before
+answering; it is not a shape, it never was, and reading it as one is how a
+surface acquires a second answer-shape rule.
+
 Since #830, *where* they go is a rule rather than a free choice. A fact lives
 on exactly one floor (D7): the facts that decide the call open the body, a
 truth-critical qualifier stays beside its number, and everything else material

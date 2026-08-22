@@ -30,6 +30,17 @@
 
 ## 2. Canonical structure: keynote + four blocks
 
+**This structure is the document incarnation of the answer pyramid**
+([expression-contract.md](expression-contract.md) §3, owner ruling
+2026-08-21 — #832). The keynote is the pyramid's top floor rendered as a
+document, the three middle blocks are its increment-gated middle, and Block 1's
+footnote is its end block. Nothing about the card changes: the derivation is
+recorded so the card stops being read as an independent statement of
+answer-first, which is what five surfaces each saying it their own way had
+already cost. The keynote's own rules below — one sentence, the period's most
+important judgment, the review window on its own line — are this surface's
+**added parameters**, not a second answer-shape rule.
+
 Every committed review card renders, in this order:
 
 | # | Block | Content | Demo-card anchor |
