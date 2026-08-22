@@ -21,13 +21,17 @@ route were not — and `decision-framing.md` mandated the exact opposite
 placement rule with no scope note, so two contradictory disclosure policies
 coexisted silently.
 
-Three registries live here:
+§3 is the **mother chapter**: the one shape every answer takes. It is not a
+registry entry and has no ID, because it is the law the registries are
+parameters of. Read it before anything below it.
+
+Three registries live under it:
 
 | Series | Owns | Where the rules are |
 |---|---|---|
 | **V1–V9** | Voice: what an answer leads with, what it may not manufacture, when it stops. | [output-voice.md](output-voice.md) — routed, never copied. |
-| **D1–D7** | Disclosure relevance and placement: what materially qualifies a claim, and which floor it lives on. | §3 below. |
-| **C1–C4** | Citation and provenance: how a claim says where it came from. | §4 below. |
+| **D1–D7** | Disclosure relevance and placement: what materially qualifies a claim, and which floor it lives on. | §4 below. |
+| **C1–C4** | Citation and provenance: how a claim says where it came from. | §5 below. |
 
 Voice stays in its own file rather than being folded in here because V1–V9 are
 a stable, ID-addressed registry with their own oracle
@@ -64,7 +68,169 @@ Out of scope here, and unchanged by this file:
   cheaply without limiting relevant research, tools, or presentation. Nothing
   here licenses dropping a fact to satisfy a style preference; see D5.
 
-## 3. Disclosure relevance and placement (D1–D7)
+## 3. The answer pyramid — the mother law
+
+Owner ruling, 2026-08-21
+([#832](https://github.com/atomchung/fomo-kernel/issues/832)). **Every
+user-visible answer this product gives has one shape.** It is mandatory, it is
+small, and every surface below derives from it rather than restating it. D1–D7,
+C1–C4, and every surface document are parameters of this shape.
+
+**Why one shape, and why now.** #830 deleted the obligation whitelist. The
+post-merge rerun of the same four frozen scenes (receipts on
+[PR #831](https://github.com/atomchung/fomo-kernel/pull/831)) shows composition
+fixed — no basis recital, no rendered machine anchor, disclosures collapsed,
+answers opening on stance — and **first-answer length inside ±5% of the
+pre-trim arm in all four scenes**. Deleting obligations was necessary and not
+sufficient: nothing positive said what an answer *is*, so the space the
+deleted obligations vacated refilled with discretionary elaboration. Worse,
+the one norm that could have said it already existed **five times, written
+five different ways**: the card's keynote (output-contract.md §2), V1
+(output-voice.md), the reader-order paragraph (SKILL.md), "lead with the
+bounded value" (decision-framing.md), "the host shows value first"
+(weekly-market-read.md). Five local phrasings of one idea drift by
+construction. #823 unified where the *rules* live and classified answer shape
+as per-surface layout; that classification is the seam this chapter closes.
+
+Four external traditions converge on the same answer, and each contributed one
+piece: the **consulting pyramid** (answer on top, supports under it, evidence
+at the bottom, and the reader descends only as far as they need); the
+**sell-side research note** (the first page is the rating, the thesis and the
+numbers that carry it, and the anatomy is a house template rather than an
+author's preference); **Anthropic's own prompting guidance** (worked examples
+steer format more reliably than a list of constraints, and a small mandatory
+base plus opt-in specialization beats one long rule set); **design-system token
+layering** (a mandatory core, an additive component layer, a fall-through
+default, and a different owner and cadence per layer).
+
+### 3.1 The four floors
+
+| Floor | What it carries | How much of it |
+|---|---|---|
+| **Top** | The answer: the stance, and the reason that decides it. | One sentence. Always present. |
+| **Middle** | Only support that could change the decision. | As many blocks as pass the increment gate, and no more. |
+| **Bottom** | Evidence, alternatives, and the rest of the computed inventory. | Not in the answer. It lives in the data layer and surfaces on request. |
+| **End** | Caliber: sources, as-of, which book, which session, material gaps. | One compact block, one line each — D7. |
+
+**The top is an answer, not a topic sentence.** It names the stance —
+proceed, resize, delay, collect evidence, pick this candidate, no trade, or
+"this is what your book now looks like" for a question with no action in it —
+and the single reason that decides it. A first sentence that describes what
+the answer is about, restates the question, or narrates what was computed has
+spent the only position the reader is guaranteed to read.
+
+**The middle is gated by increment.** Every block must add a NEW
+decision-relevant fact or judgment. The test is not "is this true" and not "is
+this owed" — under the whitelist era everything printed was both. The test is:
+**delete this block; does the decision change?** If it does not, the block is
+not shortened, it is deleted. Blocks that survive the gate have no cap, and
+this is deliberately not a length rule: an answer that genuinely needs six
+increments gets six.
+
+**Four named bans.** Each was observed live in the #827 or #830 runs, each
+survived every rule then on the books, and each is a way for a block to add
+volume without adding an increment. The slug after each name is what the
+exemplar corpus references it by (§3.5):
+
+- **A manufactured hypothetical scenario nobody asked for**
+  (`manufactured_scenario`). Inventing a comparison, a simulation, or a
+  what-if to carry facts that had nowhere else to go. The owner's verdict on
+  the observed instance — an all-in-one-name simulation nobody requested — was
+  that it meant nothing. The user's own question already bounds what is being
+  decided.
+- **A system default restated as insight** (`default_as_insight`). The
+  engine's own threshold fired, and the answer explains the threshold as though
+  the reader had learned something about their book. Both arms of the #827 A/B
+  independently wrote the same sentence about the same default, which is what
+  obligation discharge looks like from the outside. The user's *own* rule is
+  the opposite case and is never optional (see §4's D-series and
+  `rule_effects`).
+- **A hedging couplet** (`hedging_couplet`). "This is not a reason to wait,
+  but…" — a sentence that states a position and withdraws it in the same
+  breath, leaving the reader with the work of deciding which half was meant.
+  Say the half you mean. A real uncertainty is a falsifier with a threshold,
+  not a hedge.
+- **The same point in a second form** (`restated_point`). A judgment made in
+  prose and then again as a bullet, a table row, or a summary line. Restating
+  is not emphasis; it is the reader paying twice for one increment. This is
+  D6/D7 seen from the shape side.
+
+**The bottom floor is a door, not a section.** The route still computes
+everything, and the user may ask for any of it at any moment. The answer says
+**once** that expansion is available — one short offer, in whatever register
+the surface speaks — and does not preview, summarize, or partially deliver the
+expansion in advance. Not saying a number this decision does not turn on is
+not hiding it; that is the whole distinction #830's deletion rests on.
+
+**The end block is D7's one floor**, unchanged by this chapter: sources,
+as-of, which book, which session, and the material gaps, one line each,
+non-narrative, collected once. An answer with nothing on that floor ends at
+its judgment (D4).
+
+### 3.2 Voice
+
+Write as a senior analyst speaking to their own principal. Direct, concrete,
+and already inside the decision: the reader owns the money, has the context,
+and asked a real question. Name the call and the number it turns on. Do not
+teach the concept behind the number, do not narrate the process that produced
+it, do not soften a judgment into a menu, and do not close with a summary the
+reader just read. Confidence is expressed as a threshold that would change the
+call, never as an adverb and never as a disclaimer.
+
+### 3.3 Derivation is additive, and empty derivation is the default
+
+A surface may **add parameters** to this shape: which blocks its middle floor
+is allowed to hold, which question set it may ask from, what its end block
+must name, what it may not compute at all. A surface may **not** restate,
+narrow, re-order, or contradict the shape itself. A surface with no special
+need declares nothing and falls through to the default — that is the expected
+case, not a gap.
+
+The one document incarnation is the review card: its keynote plus four blocks
+*is* this pyramid rendered as a document, and `output-contract.md` §2 keeps
+that structure exactly as it is. Its derivation is recorded there; nothing
+about the card changes.
+
+### 3.4 Registry freeze for shape and length
+
+**V, D, and C take no new IDs for a shape or length concern.** A style fix has
+exactly two lanes now:
+
+1. **Amend this chapter** — requires an owner ruling, and lands in §8's log.
+2. **Add an exemplar or a counter-exemplar** — the day-to-day lane, no ruling
+   required, and the one that carries most fixes.
+
+A new V/D/C ID for "answers are too long", "lead with X", or "stop repeating
+Y" is refused: five independent phrasings of the answer-first principle is
+what this chapter exists to end, and a sixth with an ID on it is still a sixth.
+The registries keep their existing IDs and their existing subjects — a
+disclosure's *materiality* (D), a citation's *provenance* (C), a lead's
+*failure class* (V) — and the historical definitions stay readable where they
+are. Where a local answer-shape phrasing was superseded by this chapter, the
+surface document says so rather than deleting its own history.
+
+### 3.5 Exemplars are the spec
+
+The binding statement of this shape is not the prose above; it is the exemplar
+set in `tests/agent/expression-witnesses.json`. Three to five canonical
+exemplars per conversational surface, each declaring the one-sentence answer it
+leads with and the increment each of its blocks adds, plus counter-exemplars
+for the named bans. Every issuer in them is fictional (Widgetron WDGT,
+Gridcore GRDC, Fabrion FABR, ACME) and nothing is derived from a user record.
+
+`tests/agent/check_expression.py` derives E-7 and E-8 from that corpus (§7).
+What they decide is exactly two things — that the declared answer really leads,
+and that every declared block really adds a distinct increment — and the
+corpus records, as an asserted fact, that two of the four bans are
+**invisible** to it. A manufactured scenario declares no increment and a
+restated point declares one twice, so E-8 reaches both. A system default
+explained as insight and a hedging couplet are well-formed blocks carrying
+true content; deciding that one is a sermon and the other withdraws its own
+position requires reading what the answer means, which is the boundary
+`docs/development-guide.md` already draws between a code check and a judge.
+This chapter states that boundary rather than implying a gate it does not have.
+
+## 4. Disclosure relevance and placement (D1–D7)
 
 A disclosure is a sentence about the *limits* of what was just said: the book
 it was measured on, the session it was priced at, the part of the denominator
@@ -180,7 +346,7 @@ Four consequences the surfaces below inherit:
   everything, and the user can ask for any of it at any time. Not saying a
   number this decision does not turn on is not hiding it.
 
-## 4. Citation and provenance (C1–C4)
+## 5. Citation and provenance (C1–C4)
 
 | ID | Rule | Verification class | Named oracle |
 |---|---|---|---|
@@ -235,36 +401,44 @@ Already enforced on the question surface and on `--agent-case` claims
 every surface, and `check_expression.py` E-5 is its check on the conversational
 ones.
 
-## 5. Surface map
+## 6. Surface map
 
-Each surface document keeps its own layout and references this file. None of
-them may restate, narrow, or contradict V/D/C.
+Each surface document keeps its own layout, derives its answer shape from §3,
+and references this file. None of them may restate, narrow, or contradict the
+pyramid or V/D/C. "Derivation" is what that surface **adds** to §3; an empty
+derivation is valid and is the default.
 
-| Surface | Layout authority | What it keeps |
-|---|---|---|
-| Review card | [output-contract.md](output-contract.md) | Keynote + four blocks, module prerequisites, which block the footnote ends. |
-| `consider` | `references/trade-consequence.md` | Salience order, answer slots, what the payload means. |
-| Freeform answers | `references/freeform-answers.md` | Text-first defaults, proportionate production, reusable engine-backed views. |
-| No recorded book | `references/decision-framing.md` | Claim boundaries, question heuristics, the strategy-class map, the invitation set. |
-| Weekly market read | `references/weekly-market-read.md` | What the prototype reads, and what it may not invoke. |
+| Surface | Layout authority | Derivation it adds to §3 | Everything else it keeps |
+|---|---|---|---|
+| Review card | [output-contract.md](output-contract.md) | The **document incarnation**: keynote + four fixed blocks, in that order, on every committed card. | Module prerequisites, which block the footnote ends. |
+| `consider` | `references/trade-consequence.md` | Lead-selection salience order; the answer slots the middle floor may hold; `rule_effects` is never traded away. | What the payload means, the obligation floor. |
+| Freeform answers | `references/freeform-answers.md` | None on shape — text-first is a latency default, not a shape. | Proportionate production, reusable engine-backed views. |
+| No recorded book | `references/decision-framing.md` | The top sentence is a research-backed baseline when no book exists; the strategy-class map is a middle-floor block set. | Claim boundaries, question heuristics, the invitation set. |
+| Weekly market read | `references/weekly-market-read.md` | Its one optional question comes after the complete brief, never before it. | What the prototype reads, and what it may not invoke. |
 
-## 6. Enforcement
+## 7. Enforcement
 
 | Check | What it observes — and what it does not | Where |
 |---|---|---|
 | `check_card.py` S-3 | Review-card layout only: no consecutive caveat paragraphs, none before Block 1, none inside Block 1. It does not govern conversational placement. | `tests/agent/check_card.py` |
 | `check_expression.py` E-5 | C4 only: no engine payload token reaches a conversational answer. E-1–E-4 were retired by #825 because formatting is not evidence of relevance or clarity. | `tests/agent/check_expression.py` |
 | `check_expression.py` E-6 | D7's bottom floor only: no machine anchor is rendered. Matched by shape (a long hex run), not by vocabulary, so it survives a prefix rename without importing the engine. It says nothing about which floor an owed fact landed on. | `tests/agent/check_expression.py` |
+| `check_expression.py` E-7 | §3's top floor, on an exemplar: the scene's declared one-sentence answer must actually appear in the answer's opening block. It decides *placement of a declared core*, never whether that core is the right call. | `tests/agent/check_expression.py` |
+| `check_expression.py` E-8 | §3's increment gate, on an exemplar: every declared block's text occurs in the answer in declared order, and every block declares a distinct, non-empty increment. It decides *distinctness*, never whether an increment was worth having. | `tests/agent/check_expression.py` |
 | `ux_receipt` delivery evidence | The same rule where the frozen value and the presented text are both in hand: a declared `machine_state` value appearing in the answer refuses the evidence rather than counting it. Silent on a challenge block that predates the key. | `skills/fomo-kernel/tools/ux_receipt.py` |
 | `check_voice.py` | V1–V9 witness classification. | `tests/agent/check_voice.py` |
 | `answer_provenance` | C1/C2/C4 on a structured `--agent-case`, and the coverage a case may not leave uncited — including the extent of an illegible book, not only that it is one. | `skills/fomo-kernel/engine/answer_provenance.py` |
-| `test_expression_contract.py` | That both registries are complete, every surface routes here, D1–D6 honestly declare instruction-only verification, the C4 blacklist remains schema-derived, and the `consider` obligation floor stays smaller than the whole computed inventory. | `tests/test_expression_contract.py` |
+| `test_expression_contract.py` | That both registries are complete, every surface routes here **and declares its §3 derivation**, that no surface still carries a local answer-first phrasing, D1–D6 honestly declare instruction-only verification, the C4 blacklist remains schema-derived, and the `consider` obligation floor stays smaller than the whole computed inventory. | `tests/test_expression_contract.py` |
 
 **None of these runs against a live answer.** `check_expression.py` proves only
-the exact C4 and D7-floor properties it can decide. D1–D6, and D7's other three
-floors, are evaluated by reading the answer in context; pretending a regex
-covered them was the constraint failure #825 removed. Nothing sits between the
-model and the user.
+the exact C4, D7-floor, and exemplar-corpus properties it can decide. D1–D6,
+D7's other three floors, and two of §3's four named bans — a system default
+restated as insight, and the hedging couplet — are evaluated by reading the
+answer in context; pretending a regex covered them was the constraint failure
+#825 removed. The corpus asserts that gap rather than hiding it: a
+counter-exemplar for either of those two bans must **pass** every mechanical
+assertion, so the day someone builds a real oracle for one of them, that
+assertion is what tells them the coverage boundary moved. Nothing sits between the model and the user.
 
 The delivery half is observed the same way every other instruction-tier rule
 in this repository is: by owner-live dogfood and by the QA receipt
@@ -272,7 +446,7 @@ in this repository is: by owner-live dogfood and by the QA receipt
 passing loader is implementation evidence and this file says so rather than
 letting a green suite read as a governed output.
 
-## 7. Ruling log
+## 8. Ruling log
 
 | Date | Ruling |
 |---|---|
@@ -281,3 +455,4 @@ letting a green suite read as a governed output.
 | 2026-08-14 | Line cap set at five (D5) from a measured four-line worst case, with merging — never dropping — as the remedy, so a cap can never become an argument for omitting an owed fact. |
 | 2026-08-19 | Issue #825 retires the product-wide block, prefix, and line-cap template plus E-1–E-4. Those checks proved formatting, not whether a limitation mattered. The review card keeps its footnote as local layout; conversational surfaces use relevance-driven placement. |
 | 2026-08-20 | Owner ruling ([#830](https://github.com/atomchung/fomo-kernel/issues/830)): the product is too verbose, and the fix is deletion rather than a reading budget — anything whose must-have reason cannot be stated is cut. `consider`'s obligation list splits into owed / available / never-rendered, and D7 makes volume *distribution* expression's business, which §2 had disclaimed and nothing else had claimed. The reading-budget rule proposed as V10 is demoted to a backstop and is not adopted here: a length cap is what #827 had just deleted, and re-adding one would have priced the symptom instead of removing the cause. |
+| 2026-08-21 | Owner ruling ([#832](https://github.com/atomchung/fomo-kernel/issues/832)): **one communication method.** §3 becomes the mother law — one pyramid, mandatory on every surface — and the five independent local phrasings of answer-first (the card keynote, V1, SKILL.md's reader-order paragraph, `decision-framing.md`'s bounded-value lead, `weekly-market-read.md`'s value-first, plus `trade-consequence.md`'s reader-question-chain section, the sixth the audit found) are replaced by derivation references. Derivation is **additive only** and an empty derivation is the default. The increment gate and four named bans are encoded; V/D/C take no new IDs for a shape or length concern, so a future style fix is either an owner amendment to §3 or an exemplar — never a sixth phrasing with an ID on it. The card's structure is unchanged: it is the document incarnation of the same pyramid. Deliberately **not** adopted, again: any character-count cap (#543's ceiling, deleted by #827, stays deleted) — the shape is positive, and length is its consequence rather than its rule. Integrity gates (engine-owned numbers, provenance, canonical writes, execution truth, privacy) are untouched, and the #829 unselected-write finding stays open and out of scope. |
