@@ -17,8 +17,18 @@ Voice is one of three expression registries.
 [expression-contract.md](expression-contract.md) routes to this file for V1–V9
 and owns the other two: **where a disclosure goes, and on which floor** (D1–D7) and **how a claim
 states where it came from** (C1–C4). A rule about placement or citation belongs
-there, not here; a rule about what an answer leads with, refuses to
-manufacture, or stops at belongs here.
+there, not here; a rule about what an answer refuses to manufacture or stops at
+belongs here.
+
+**The shape of an answer is not this file's** (#832, 2026-08-21). The
+[expression contract](expression-contract.md)'s §3 mother chapter is the one
+statement of it — one-sentence answer on top, an increment-gated middle, the
+rest of the inventory behind a single offer, one caliber block at the end — and
+V1 derives from it rather than stating it a second time. **This registry takes
+no new ID for a shape or a length concern**: a style fix is either an owner
+amendment to §3 or a new exemplar in
+`tests/agent/expression-witnesses.json`. V10, proposed as a reading budget in
+#830 and demoted there, stays unallocated for the same reason.
 
 Phase 1 integrates and proves this authority only on `consider` and no-book
 decision framing. That limited proof does not exempt other surfaces; it avoids
@@ -44,9 +54,16 @@ deterministic product truth.
 
 ## Rules
 
-- **V1 — decision value before boundary.** Lead with the supported decision
-  tension or completion, not an error, process description, disclaimer, or
-  generic limitation.
+- **V1 — decision value before boundary.** What an answer leads with is the
+  pyramid's top floor and
+  [expression-contract.md](expression-contract.md) §3 owns it. V1 keeps its ID
+  as the **failure class**: an answer that opens on an error, a process
+  description, a disclaimer, or a generic limitation instead of the supported
+  decision is classified V1 by the witness oracle and by every cross-host run
+  recorded under that ID. Its historical definition — "lead with the supported
+  decision tension or completion" — is superseded by §3 as a *statement of the
+  rule*, and preserved here because the fixtures and rulings that cite V1 are
+  about this failure.
 - **V2 — nearest useful completion.** If a requested action or calculation is
   unavailable or out of scope, complete the closest allowed reasoning task
   rather than stopping at the boundary.

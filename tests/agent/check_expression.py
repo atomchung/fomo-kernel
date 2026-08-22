@@ -1,33 +1,54 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Check C4 and D7's machine-anchor floor of the conversational expression
-contract (offline, deterministic).
+"""Check the deterministic half of the conversational expression contract
+(offline, no dependencies).
 
-Issue #825 retired E-1 through E-4. They classified block position, a literal
-prefix, line count, and exact-string repetition; none could tell whether a
-limitation mattered or where it read clearly. E-5 remains because leaking an
-engine payload token is an exact, deterministic product defect.
+Two of these assertions read an answer's text alone; two read an exemplar
+scene, because what they decide is a relationship between an answer and the
+shape its author declared for it.
 
-E-6 (#830) is the second such defect: rendering a machine anchor. D7 says a
-fact lives on exactly one floor, and the bottom floor is "payload only,
-never rendered" — `basis.state_version`, a content hash whose only reader is
-a mechanical QA comparison. E-6 is the half of D7 a regex can honestly
-decide; where the disclosure lands when it *is* owed remains a judgment D1
-and D2 govern.
+**Text-only.** E-5 fails an answer that says an engine payload token at the
+user (C4). E-6 (#830) fails one that renders a machine anchor: D7 says a fact
+lives on exactly one floor, and the bottom floor is "payload only, never
+rendered" — `basis.state_version`, a content hash whose only reader is a
+mechanical QA comparison. Issue #825 retired E-1 through E-4, which classified
+block position, a literal prefix, line count, and exact-string repetition; none
+of them could tell whether a limitation mattered or where it read clearly.
+
+**Exemplar-level (#832).** The answer pyramid — `docs/expression-contract.md`
+§3 — is stated bindingly by the exemplar corpus rather than by prose, so its
+oracle reads the corpus. E-7 fails a scene whose declared one-sentence answer
+(`core`) does not appear in its answer's opening block: the top floor is the
+one position the reader is guaranteed to read, and an answer that spends it on
+anything else has no core, wherever the rest of it went. E-8 fails a scene
+whose declared blocks are not all present in the answer in declared order, or
+which declares no increment for a block, or which declares the same increment
+twice — the increment gate's mechanical half.
+
+**What E-7 and E-8 do not decide.** Whether the declared core is the *right*
+call, and whether a declared increment was *worth* having, are read, not
+matched. Two of §3's four named bans have no assertion at all — a system
+default restated as insight, and a hedging couplet — and the corpus asserts
+that gap instead of hiding it: a `counter` scene names the ban it violates and
+must **pass** every assertion here, so the day an honest oracle for one of them
+exists, that scene is what says the coverage boundary moved. A declared
+increment is the author's claim about their own scene, exactly as `fails` is;
+what this file verifies is that the declaration is faithful to the text (the
+block really is there, at that point, exactly once) and internally coherent.
 
 The token blacklist for E-5 is READ FROM THE SCHEMAS, never transcribed here.
 `skills/fomo-kernel/schemas/*.schema.json` already enumerate the engine's own
 vocabulary, so a new disclosure key or rule effect is covered the day it is
 added rather than the day someone remembers this file. Hand-mirroring it is
 what docs/maintainer-guide.md forbids and what borrowed enumerations go stale
-from.
+from. The ban registry is read the same way, from the fixture itself.
 
 Run:
-  python3 tests/agent/check_expression.py <answer.md|->
-  python3 tests/agent/check_expression.py            # check the witness fixture
+  python3 tests/agent/check_expression.py <answer.md|->   # E-5 and E-6 only
+  python3 tests/agent/check_expression.py                 # the whole corpus
 Import:
   from check_expression import check_expression, check_fixture
-  findings = check_expression(answer_text)   # list[Finding]
+  findings = check_expression(answer_text)   # list[Finding], text-only
 """
 from __future__ import annotations
 
@@ -65,7 +86,20 @@ _TOKEN_EXEMPT = frozenset({"as_of"})
 _MACHINE_ANCHOR = re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{32,}(?![0-9a-fA-F])")
 
 
-ASSERTIONS = ("E-5", "E-6")
+# Everything the fixture classifies. `TEXT_ASSERTIONS` is the subset a caller
+# can run against an arbitrary answer, which is why the CLI path says so rather
+# than printing four findings and inventing two of them.
+TEXT_ASSERTIONS = ("E-5", "E-6")
+EXEMPLAR_ASSERTIONS = ("E-7", "E-8")
+ASSERTIONS = TEXT_ASSERTIONS + EXEMPLAR_ASSERTIONS
+
+# §3.5's own words: "three to five canonical exemplars per conversational
+# surface". Below the floor the corpus stops being a spec and becomes an
+# anecdote; above the ceiling it stops being read, which is the failure the
+# whole chapter is about.
+MIN_EXEMPLARS, MAX_EXEMPLARS = 3, 5
+
+SCENE_KINDS = ("positive", "negative", "counter")
 
 
 @dataclass
@@ -133,32 +167,111 @@ def _e6_no_machine_anchor(text: str) -> Finding:
 
 
 def check_expression(text: str, tokens=None) -> list:
-    """The deterministic expression assertions against one answer."""
+    """The text-only expression assertions against one answer."""
     tokens = internal_tokens() if tokens is None else tokens
     return [_e5_no_internal_tokens(text, tokens), _e6_no_machine_anchor(text)]
+
+
+# ──────────────────── the pyramid's two decidable halves ────────────────────
+
+def _e7_the_core_leads(scene) -> Finding:
+    """§3's top floor. The scene declares the one sentence that answers the
+    question; this checks the answer actually opens on it. An opening block is
+    everything before the first blank line, because that is what a reader gets
+    without scrolling on every surface this product speaks on."""
+    label = "§3 top floor: the declared one-sentence answer leads"
+    answer = scene.get("answer") or ""
+    core = scene.get("core")
+    if not isinstance(core, str) or not core.strip():
+        return Finding("E-7", False, label, "the scene declares no core")
+    if core not in answer:
+        return Finding("E-7", False, label, "the declared core is nowhere in the answer")
+    if core not in answer.split("\n\n", 1)[0]:
+        return Finding("E-7", False, label,
+                       "the declared core is in the answer but not in its opening block")
+    return Finding("E-7", True, label)
+
+
+def _e8_every_block_adds_something_new(scene) -> Finding:
+    """§3's increment gate, on the half a match can decide: the declared
+    decomposition is faithful (each block's text is in the answer, at or after
+    the previous one) and every block names a distinct increment. A block with
+    no increment is a manufactured carrier; two blocks with one increment are
+    the same point in a second form."""
+    label = "§3 increment gate: each block is in place and adds a distinct increment"
+    answer = scene.get("answer") or ""
+    blocks = scene.get("blocks")
+    if not isinstance(blocks, list) or not blocks:
+        return Finding("E-8", False, label, "the scene declares no blocks")
+    cursor, seen, problems = 0, {}, []
+    for index, block in enumerate(blocks):
+        if not isinstance(block, dict):
+            problems.append(f"block {index} is not an object")
+            continue
+        text = block.get("text")
+        if not isinstance(text, str) or not text.strip():
+            problems.append(f"block {index} declares no text")
+            continue
+        position = answer.find(text, cursor)
+        if position < 0:
+            problems.append(
+                f"block {index} is not in the answer at or after the block before it")
+            continue
+        cursor = position + len(text)
+        adds = block.get("adds")
+        if not isinstance(adds, str) or not adds.strip():
+            problems.append(f"block {index} declares no increment")
+            continue
+        key = " ".join(adds.split()).casefold()
+        if key in seen:
+            problems.append(f"block {index} repeats the increment of block {seen[key]}")
+        else:
+            seen[key] = index
+    return Finding("E-8", not problems, label, "; ".join(problems[:3]))
+
+
+def check_exemplar(scene) -> list:
+    """The assertions that need the scene's declared shape, not only its text."""
+    return [_e7_the_core_leads(scene), _e8_every_block_adds_something_new(scene)]
 
 
 # ─────────────────────────── witness fixture ───────────────────────────
 
 def check_fixture(path: pathlib.Path = DEFAULT_FIXTURE) -> list:
-    """Classify the synthetic witnesses, the way `check_voice.py` does for
-    V1–V9: a positive scene must produce no finding, and a negative scene
-    must fail exactly the assertion it declares — no more, so a witness
-    cannot pass by being broken in several ways at once."""
+    """Classify the exemplar corpus.
+
+    A **positive** exemplar must produce no finding. A **negative** one must
+    fail exactly the assertion it declares — no more, so a witness cannot pass
+    by being broken in several ways at once. A **counter** exemplar names a ban
+    nothing here can decide and must pass every assertion; that is the
+    coverage boundary stated as a test rather than as a promise.
+
+    Three corpus-level properties beyond the per-scene verdicts: every
+    conversational surface carries §3.5's three to five positive exemplars,
+    every declared ban is demonstrated by at least one scene, and every
+    assertion has a negative witness."""
     try:
         fixture = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         return [f"cannot load fixture: {error}"]
-    if fixture.get("schema_version") != 1:
+    if fixture.get("schema_version") != 2:
         return ["unsupported fixture schema_version"]
     if fixture.get("privacy") != "synthetic_only":
         return ["fixture must declare synthetic_only privacy"]
+    surfaces = fixture.get("surfaces")
+    if not isinstance(surfaces, dict) or not surfaces:
+        return ["surfaces must be a non-empty object"]
+    bans = fixture.get("bans")
+    if not isinstance(bans, dict) or not bans:
+        return ["bans must be a non-empty object"]
     scenes = fixture.get("scenes")
     if not isinstance(scenes, list) or not scenes:
         return ["scenes must be a non-empty list"]
 
     tokens = internal_tokens()
-    seen, problems, covered = set(), [], set()
+    seen, problems = set(), []
+    covered, banned = set(), set()
+    exemplars = {surface: 0 for surface in surfaces}
     for scene in scenes:
         scene_id = scene.get("id") if isinstance(scene, dict) else None
         if not isinstance(scene_id, str) or not scene_id:
@@ -167,16 +280,32 @@ def check_fixture(path: pathlib.Path = DEFAULT_FIXTURE) -> list:
         if scene_id in seen:
             problems.append(f"duplicated scene ID {scene_id!r}")
         seen.add(scene_id)
+        surface = scene.get("surface")
+        if surface not in surfaces:
+            problems.append(f"{scene_id}: unknown surface {surface!r}")
         answer = scene.get("answer")
         if not isinstance(answer, str) or not answer.strip():
             problems.append(f"{scene_id}: missing non-empty answer")
             continue
-        failed = {finding.assertion for finding in check_expression(answer, tokens)
+        ban = scene.get("ban")
+        if ban is not None:
+            if ban not in bans:
+                problems.append(f"{scene_id}: unknown ban {ban!r}")
+            else:
+                banned.add(ban)
+        kind = scene.get("kind")
+        if kind not in SCENE_KINDS:
+            problems.append(f"{scene_id}: unknown scene kind {kind!r}")
+            continue
+        failed = {finding.assertion
+                  for finding in check_expression(answer, tokens) + check_exemplar(scene)
                   if not finding.passed}
-        if scene.get("kind") == "positive":
+        if kind == "positive":
+            if surface in exemplars:
+                exemplars[surface] += 1
             if failed:
-                problems.append(f"{scene_id}: positive scene failed {sorted(failed)}")
-        elif scene.get("kind") == "negative":
+                problems.append(f"{scene_id}: positive exemplar failed {sorted(failed)}")
+        elif kind == "negative":
             expected = scene.get("fails")
             if expected not in ASSERTIONS:
                 problems.append(f"{scene_id}: unknown expected assertion {expected!r}")
@@ -186,8 +315,24 @@ def check_fixture(path: pathlib.Path = DEFAULT_FIXTURE) -> list:
                 problems.append(
                     f"{scene_id}: expected exactly {{{expected}}} to fail, got {sorted(failed)}")
         else:
-            problems.append(f"{scene_id}: unknown scene kind {scene.get('kind')!r}")
+            if ban is None:
+                problems.append(
+                    f"{scene_id}: a counter-exemplar must name the ban it demonstrates")
+            if failed:
+                problems.append(
+                    f"{scene_id}: a counter-exemplar must pass every assertion — it "
+                    f"exists to record that nothing mechanical catches its ban — but "
+                    f"it failed {sorted(failed)}. If an assertion legitimately reaches "
+                    f"this ban now, promote the scene to a negative witness.")
 
+    for surface, count in sorted(exemplars.items()):
+        if not MIN_EXEMPLARS <= count <= MAX_EXEMPLARS:
+            problems.append(
+                f"surface {surface!r} has {count} positive exemplars; "
+                f"§3.5 asks for {MIN_EXEMPLARS} to {MAX_EXEMPLARS}")
+    unbanned = sorted(set(bans) - banned)
+    if unbanned:
+        problems.append(f"no scene demonstrates the named ban: {unbanned}")
     missing = set(ASSERTIONS) - covered
     if missing:
         problems.append(f"no negative witness for: {sorted(missing)}")
@@ -198,16 +343,19 @@ def main() -> int:
     if len(sys.argv) == 1:
         problems = check_fixture()
         if problems:
-            print("FAIL: expression witnesses")
+            print("FAIL: expression exemplars")
             print("\n".join(f"- {problem}" for problem in problems))
             return 1
-        print("PASS: expression witnesses")
+        print("PASS: expression exemplars")
         return 0
     source = sys.argv[1]
     text = sys.stdin.read() if source == "-" else pathlib.Path(source).read_text(encoding="utf-8")
     findings = check_expression(text)
     for finding in findings:
         print(finding)
+    print(f"(text-only: {', '.join(TEXT_ASSERTIONS)}. "
+          f"{', '.join(EXEMPLAR_ASSERTIONS)} need a scene's declared core and blocks, "
+          f"so they run over the corpus.)")
     return 1 if any(not finding.passed for finding in findings) else 0
 
 

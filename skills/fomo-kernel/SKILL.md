@@ -9,7 +9,7 @@ Use relevant evidence and the recorded book when portfolio consequences matter; 
 
 ## Answer a live decision
 
-Use `consider` when the user supplies a trade premise and asks what it does to a recorded book. It is the deterministic portfolio-consequence path, not a prerequisite for company research, candidate discovery, or a non-portfolio recommendation.
+Use `consider` when the user supplies a trade premise and asks what it does to a recorded book. It is the deterministic portfolio-consequence path, never a prerequisite for research, discovery, or a non-portfolio recommendation.
 
 ```bash
 cd skills/fomo-kernel
@@ -20,7 +20,7 @@ A premise needs a `ticker`, a `side`, and one of `qty` or `notional`. Everything
 
 Pass `--language` as the tag the user is writing in; an unsupported tag falls back to `en`. Keep conversing in their language and never hand-translate engine copy.
 
-First run only: `pip install -r requirements.txt`, then `python3 engine/review.py doctor`. The engine fail-soft degrades without its optional dependencies — silently dropping current prices, P&L, alpha/beta, and market context — so verify once rather than discovering it inside an answer.
+First run only: `pip install -r requirements.txt`, then `python3 engine/review.py doctor`. The engine fail-soft degrades without its optional dependencies — silently dropping current prices and market context — so verify once rather than mid-answer.
 
 ## The response is the contract
 
@@ -36,15 +36,15 @@ Read portfolio consequence from that payload; never recompute or fill its gaps. 
 
 ## Research only what could change the recommendation
 
-The engine computes portfolio consequence; it is not a company-research service. Do not fetch a standing market packet on every call. Look up current price, recent movement, valuation, an event, or operating evidence only when that fact is material to the user's question or could change the recommendation. A found event never becomes the user's motive until they confirm it is. `references/market-lookup.md` owns the bounded lookup and provenance contract.
+The engine computes portfolio consequence; it is not a company-research service. Look up current price, recent movement, valuation, an event, or operating evidence only when that fact is material to the user's question or could change the recommendation. A found event never becomes the user's motive until they confirm it is. `references/market-lookup.md` owns the bounded lookup and provenance contract.
 
 ## Shape of the answer
 
-Answer in the reader's own order — what they asked, the answer, why, what would overturn it, what to do — not the payload's field order. Say what this decision needs, not what exists. Open on the stance and the reason that decides it: proceed, resize, delay, collect evidence, choose one candidate, or no trade. Carry the one or two numbers that would flip it, and every `rule_effects` entry, which is never optional. Give a directional call a falsifier — that is the counter-case, and it needs no section. Ask only decision-changing questions, then stop.
+One shape, every answer (`../../docs/expression-contract.md` §3 owns it; this is its projection, not a second wording). **A fact lives on exactly one floor, and twice is a bug.** *Top:* one sentence — the stance and the reason that decides it (proceed, resize, delay, collect evidence, choose one candidate, no trade). *Middle:* only blocks that add a new decision-relevant fact or judgment — delete one; if the decision does not change, delete it. There live the numbers that would flip the call, every `rule_effects` entry (never optional), a truth-critical denominator, unit, or pricing set beside its number, and a falsifier on any directional call — the counter-case needs no section. *Bottom:* the rest of the inventory stays in the data layer; say once you can expand it. *End:* one compact block for other material limitations; machine anchors and engine narration nowhere.
 
-**A fact lives on exactly one floor; twice is a bug** — deciding facts in the body, a truth-critical denominator, unit, or pricing set beside its number, other material limitations in one compact end block, machine anchors and engine narration nowhere. `references/trade-consequence.md` holds the rest.
+Never manufacture a scenario nobody asked for, restate a system default as insight, hedge in couplets, or make one point twice. Ask only decision-changing questions, then stop. `references/trade-consequence.md` holds the rest.
 
-Label your thesis, valuation, timing, forecast, recommendation, ranking, or selection as judgment, separate from engine facts. Give a target or forecast's material assumptions and uncertainty; never disguise it as fact or certainty. Never claim what the user did or will do.
+Label judgment — thesis, valuation, timing, forecast, recommendation, ranking, selection — separate from engine facts. Give a target or forecast's material assumptions and uncertainty; never disguise it as fact or certainty. Never claim what the user did or will do.
 
 **Candidate discovery and comparison.** For an explicit search, report universe,
 filters, as-of point, material exclusions, and coverage limits; never imply
@@ -59,7 +59,7 @@ evaluation row.
 - **Unpriced instruments.** The payload says how to return them. Read closes from the publisher's page, transcribe the `references/price-feed.md` envelope, and rerun with `--prices <path>`. If none are published, `--prices-unavailable '<sources checked>'` refuses only the current-value portfolio consequence; still give supported non-portfolio judgment. Never invent, interpolate, or recall a price; missing is not delisted or zero.
 - **No recorded book.** `consider` fails closed for book-derived claims. Continue with supported research and judgment, and frame the decision under `references/decision-framing.md`; do not manufacture portfolio precision or persist the conversation.
 
-A refusal does not end the turn. You still owe the judgment that holds without the numbers the engine would not compute — say plainly what could not be checked and name what would unblock it, because the user's next move is to close that gap. Never present a degraded number as if it were the real one: a forward-looking decision is refused rather than answered on cost weights precisely because cost weights can invert which position is the largest.
+A refusal does not end the turn. You still owe the judgment that holds without the numbers the engine would not compute — say plainly what could not be checked and name what would unblock it. Never present a degraded number as if it were the real one: a forward-looking decision is refused rather than answered on cost weights, which can invert which position is the largest.
 
 ## After the answer
 
@@ -73,7 +73,7 @@ python3 engine/review.py consider --resolve <evaluation_id> --decision acted|dec
 
 ## Other jobs
 
-Reach for these when the user asks for them. None of them routes an ordinary decision.
+Reach for these when the user asks. None routes an ordinary decision.
 
 | The user wants | Do this |
 |---|---|
@@ -84,4 +84,4 @@ Reach for these when the user asks for them. None of them routes an ordinary dec
 | To continue after an interruption | `python3 engine/review.py resume` — never refetch prices mid-session |
 | A failed projection repaired | `python3 engine/review.py repair-projections` |
 
-A simple ad hoc question defaults to a fast, direct text answer. Use relevant research, multiple tools, or a visual when the user asks or when it materially improves the decision; keep the work proportionate and report material coverage limits.
+A simple ad hoc question defaults to a fast, direct text answer; scale research, tools, and visuals to decision value and report material coverage limits (`references/freeform-answers.md`).

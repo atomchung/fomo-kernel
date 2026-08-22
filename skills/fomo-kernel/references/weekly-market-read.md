@@ -26,15 +26,20 @@ must follow `market-lookup.md`: one triggered packet maximum, source/as-of on
 every public fact, and never infer the user's motive.
 
 How that brief is said is not this file's to decide: apply the global
-[expression contract](../../../docs/expression-contract.md) — voice V1–V9,
-disclosure relevance and placement D1–D7, provenance labelling C1–C4. Source and as-of on a
-public fact are C2; the labelled judgment risk is C1. This file owns only what
-the read may compute and what it must refuse.
+[expression contract](../../../docs/expression-contract.md) — the answer's
+shape through its §3 mother chapter, voice V1–V9, disclosure relevance and
+placement D1–D7, provenance labelling C1–C4. Source and as-of on a public fact
+are C2; the labelled judgment risk is C1. This file owns only what the read may
+compute and what it must refuse.
 
-The host shows value first. The first response has `optional_question.selected`
-as `null`, then may ask its one optional question after the complete brief.
-When the user skips, stop: the shown brief is already complete. Only on an
-answer, rerun the same read-only command with its offered `--focus` value;
-that second response has the selected value and a visibly different
-current-session watch, without another question. Persistence is outside this
-prototype.
+**This route's derivation from §3, and nothing more** (#832): the one optional
+question comes *after* the complete brief, never before it. That is a sequencing
+parameter on a read whose whole first response is a brief; the reason a brief
+leads at all is §3's top floor, which this file no longer restates.
+
+The first response has `optional_question.selected` as `null`, then may ask its
+one optional question. When the user skips, stop: the shown brief is already
+complete. Only on an answer, rerun the same read-only command with its offered
+`--focus` value; that second response has the selected value and a visibly
+different current-session watch, without another question. Persistence is
+outside this prototype.

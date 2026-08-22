@@ -24,10 +24,19 @@ when it could change the recommendation or unlock the portfolio claim.
 ## Voice and expression authority
 
 Apply the global [expression contract](../../../docs/expression-contract.md):
-voice through the [output-voice contract](../../../docs/output-voice.md)
-(V1–V9), disclosure relevance and placement through D1–D7, provenance labelling through
-C1–C4. They own universal output semantics; this reference owns the no-book
-facts, questions, and route order below.
+the answer's shape through its §3 mother chapter, voice through the
+[output-voice contract](../../../docs/output-voice.md) (V1–V9), disclosure
+relevance and placement through D1–D7, provenance labelling through C1–C4.
+They own universal output semantics; this reference owns the no-book facts,
+questions, and route order below.
+
+**This route's derivation from §3, and nothing more** (#832): with no book,
+the pyramid's top sentence is a *research-backed baseline* rather than a
+computed consequence, and the strategy-class map below is a middle-floor block
+set. Both are stated once, in "Research-aware strategy framing". Everything
+else about the shape — that the top is one sentence, that every block must add
+a new decision-relevant fact, that the rest of the inventory waits behind one
+offer — is §3's, and this file no longer says it a second time.
 
 ## What the answer is
 
@@ -45,11 +54,12 @@ A useful framing may carry:
 
 When a user asks for a strategy before they have a book, do not make them
 invent an exit philosophy before supplying the bounded value available now.
-For a simple strategy question, lead with the bounded value already supported:
+This route's block order — the parameter it adds to the pyramid, whose top
+floor is already the answer:
 
 ```text
-research-backed baseline
-→ applicable strategy-class map
+research-backed baseline          (the top sentence, when no book exists)
+→ applicable strategy-class map   (middle floor)
 → any question whose answer could change the recommendation
 ```
 

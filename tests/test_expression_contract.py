@@ -49,6 +49,23 @@ SURFACES = {
     REFERENCES / "weekly-market-read.md": "weekly market read",
 }
 
+WITNESSES = ROOT / "tests" / "agent" / "expression-witnesses.json"
+SKILL = ROOT / "skills" / "fomo-kernel" / "SKILL.md"
+GUIDE = ROOT / "docs" / "maintainer-guide.md"
+
+# #832. Each surface that used to carry its own wording of answer-first, and
+# the exact string that wording was. A surface may keep its history in a
+# superseded-by clause; what it may not keep is the rule stated as if it were
+# still the rule here. `output-voice.md` is deliberately absent: V1 keeps its
+# ID as a failure class and quotes its own superseded definition, which is
+# checked separately below rather than by absence.
+RETIRED_ANSWER_FIRST_PHRASINGS = {
+    SKILL: "Answer in the reader's own order",
+    REFERENCES / "weekly-market-read.md": "The host shows value first",
+    REFERENCES / "decision-framing.md": "lead with the bounded value already supported",
+    REFERENCES / "trade-consequence.md": "### The reader's question chain",
+}
+
 DISCLOSURE_IDS = tuple(f"D{number}" for number in range(1, 8))
 CITATION_IDS = tuple(f"C{number}" for number in range(1, 5))
 # The rules whose table row must keep declaring that nothing mechanical
@@ -144,6 +161,101 @@ def test_the_always_on_layer_states_relevance_without_a_template():
     assert "tail block" not in text
     assert "`[i] `" not in text
     assert "at most five lines" not in text.lower()
+
+
+# ───────────── 2b. one communication method, and only one (#832) ─────────────
+
+def _mother_chapter():
+    """§3 alone. Reading the whole file would let a mention anywhere satisfy a
+    check about what the mother chapter itself says."""
+    text = CONTRACT.read_text(encoding="utf-8")
+    start = text.index("\n## 3. ")
+    return text[start:text.index("\n## 4. ", start)]
+
+
+def test_the_mother_chapter_exists_and_carries_the_pyramid():
+    chapter = _mother_chapter()
+    for required in ("increment", "one sentence", "counter-exemplar"):
+        assert required in chapter.lower(), (
+            f"the mother chapter does not mention {required!r}")
+    # Not a registry. The whole point of #832 is that shape stopped being an
+    # ID-addressed rule, so a D8/C5/V10 row appearing here would be the sixth
+    # phrasing wearing an ID.
+    assert not re.search(r"^\|\s*[DCV]\d+\s*\|", chapter, re.M), (
+        "the mother chapter grew a registry row; shape takes no new IDs")
+
+
+def test_the_named_bans_are_declared_in_the_mother_chapter():
+    """The corpus is where the bans are referenced by slug and the chapter is
+    where they are defined. Neither is a copy of the other, so the link has to
+    be gated or the corpus can name a ban no rule states."""
+    bans = json.loads(WITNESSES.read_text(encoding="utf-8"))["bans"]
+    chapter = _mother_chapter()
+    assert len(bans) == 4, f"#832 names four bans; the corpus declares {len(bans)}"
+    for slug in bans:
+        assert f"`{slug}`" in chapter, (
+            f"the corpus declares the ban {slug!r} and the mother chapter never names it")
+
+
+def test_every_surface_declares_its_derivation_from_the_mother_chapter():
+    """Routing to the contract was #823's bar and is no longer enough: a
+    surface must say what it *adds* to the shape, including when the honest
+    answer is nothing."""
+    for path, surface in SURFACES.items():
+        text = path.read_text(encoding="utf-8")
+        assert "§3" in text, (
+            f"{path.relative_to(ROOT)} ({surface}) does not point at the mother chapter")
+        assert any(word in text for word in ("derivation", "derives", "derive")), (
+            f"{path.relative_to(ROOT)} ({surface}) does not declare its derivation")
+
+
+def test_no_surface_still_carries_a_local_answer_first_phrasing():
+    """#832's grep-checkable acceptance. Five surfaces each stated answer-first
+    in their own words, which is drift by construction; the sixth
+    (`trade-consequence.md`'s reader-question-chain section) turned up in the
+    audit. None of them may state it again."""
+    for path, phrase in RETIRED_ANSWER_FIRST_PHRASINGS.items():
+        text = path.read_text(encoding="utf-8")
+        assert phrase not in text, (
+            f"{path.relative_to(ROOT)} still states the answer shape itself "
+            f"({phrase!r}); replace it with a derivation from the mother chapter")
+
+
+def test_v1_became_a_failure_class_pointing_at_the_mother_chapter():
+    """The one surface that may keep its old wording, because fixtures and
+    cross-host rulings cite V1 by ID. What it may not do is present that
+    wording as the current statement of the rule."""
+    text = VOICE.read_text(encoding="utf-8")
+    v1 = text[text.index("- **V1 —"):text.index("- **V2 —")]
+    assert "expression-contract.md" in v1 and "§3" in v1, (
+        "V1 does not route its shape half to the mother chapter")
+    assert "superseded" in v1, (
+        "V1 keeps its historical definition without marking it superseded")
+
+
+def test_the_registry_freeze_for_shape_is_recorded():
+    """The freeze is the governance half of #832 and has to be readable from
+    both the contract and the maintainer route, or the next style fix arrives
+    as V10."""
+    chapter = _mother_chapter()
+    assert "no new ID" in chapter or "no new IDs" in chapter, (
+        "the mother chapter does not record the V/D/C freeze for shape and length")
+    assert "V10" in VOICE.read_text(encoding="utf-8"), (
+        "output-voice.md does not say V10 stays unallocated")
+    guide = GUIDE.read_text(encoding="utf-8")
+    assert "#832" in guide, "the maintainer guide has no #832 mirrored-surfaces row"
+    assert "no new ID" in guide, (
+        "the maintainer guide's #832 row does not record the registry freeze")
+
+
+def test_no_character_count_cap_came_back():
+    """#543's ceiling was deleted by #827 and stays deleted. A shape law is the
+    place a length cap would most plausibly be smuggled back in, so the check
+    lives here."""
+    for path in list(SURFACES) + [SKILL, CONTRACT]:
+        text = path.read_text(encoding="utf-8").lower()
+        for banned in ("character cap", "character limit", "at most five lines"):
+            assert banned not in text, f"{path.relative_to(ROOT)} reintroduces a {banned}"
 
 
 def test_the_contract_routes_voice_rather_than_restating_it():
@@ -311,6 +423,13 @@ def main():
         test_unverified_rules_are_declared_unverified,
         test_every_surface_routes_to_the_contract,
         test_the_always_on_layer_states_relevance_without_a_template,
+        test_the_mother_chapter_exists_and_carries_the_pyramid,
+        test_the_named_bans_are_declared_in_the_mother_chapter,
+        test_every_surface_declares_its_derivation_from_the_mother_chapter,
+        test_no_surface_still_carries_a_local_answer_first_phrasing,
+        test_v1_became_a_failure_class_pointing_at_the_mother_chapter,
+        test_the_registry_freeze_for_shape_is_recorded,
+        test_no_character_count_cap_came_back,
         test_the_contract_routes_voice_rather_than_restating_it,
         test_the_witness_oracle_passes,
         test_the_checker_derives_its_blacklist_from_the_schemas,

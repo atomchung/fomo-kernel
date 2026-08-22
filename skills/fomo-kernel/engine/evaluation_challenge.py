@@ -186,8 +186,8 @@ import consequence as consequence_engine
 #
 # `concentration` and `cash` left this tuple in #830 and now live in
 # `MAY_STATE_TOPICS`. The order that remains is a dependency order, never a
-# reading order: `references/trade-consequence.md` states the reader's own
-# question chain the answer is arranged by, and the deciding fact opens it.
+# reading order: `docs/expression-contract.md` §3 owns the shape the answer is
+# arranged in, and the deciding fact opens it.
 TOPICS = ("basis", "price_basis", "position",
           "rule_collision", "disclosure", "excluded_holding", "out_of_scope")
 
