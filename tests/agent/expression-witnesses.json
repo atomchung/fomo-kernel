@@ -1,63 +1,667 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "privacy": "synthetic_only",
-  "comment": "Synthetic witnesses for docs/expression-contract.md's deterministic checks. Issue #825 retired the formatting-only E-1 through E-4 assertions; placement, markers, and answer length may vary. #830 added E-6, D7's machine-anchor floor, and the three acceptance templates the owner approved for the deletion-first answer shape. Every scene is invented and nothing is derived from a user record; all issuers are fictional (Widgetron WDGT, Gridcore GRDC, Fabrion FABR).",
+  "comment": "Exemplars for docs/expression-contract.md. #832 made this corpus the binding statement of the answer pyramid (§3): three to five canonical exemplars per conversational surface, each declaring the one-sentence answer it leads with (`core`) and the increment each of its blocks adds (`blocks[].adds`), plus counter-exemplars for the four named bans. #825 retired the formatting-only E-1 through E-4; placement, markers and answer length still vary freely. #830 added E-6 and the owner's three approved acceptance templates. Every scene is invented, nothing is derived from a user record, and all issuers are fictional (Widgetron WDGT, Gridcore GRDC, Fabrion FABR, ACME).",
+  "surfaces": {
+    "consider": "The deterministic portfolio-consequence route (references/trade-consequence.md).",
+    "no_book": "A live decision with no recorded book (references/decision-framing.md).",
+    "freeform": "Ad hoc questions outside the card lifecycle (references/freeform-answers.md).",
+    "weekly_read": "The read-only weekly market brief (references/weekly-market-read.md)."
+  },
+  "bans": {
+    "manufactured_scenario": "A hypothetical scenario, comparison or simulation nobody asked for, invented to carry facts that had nowhere else to go.",
+    "default_as_insight": "The engine's own threshold fired, and the answer explains the threshold as though the reader had learned something about their book.",
+    "hedging_couplet": "A sentence that states a position and withdraws it in the same breath, leaving the reader to decide which half was meant.",
+    "restated_point": "A judgment made once in prose and again as a summary, a bullet or a table row. The reader pays twice for one increment."
+  },
   "scenes": [
     {
       "id": "consider_inline_limitation",
+      "surface": "consider",
       "kind": "positive",
-      "covers": ["D1", "D2", "D3", "D5", "D6"],
+      "covers": [
+        "D1",
+        "D2",
+        "D3",
+        "D5",
+        "D6"
+      ],
       "note": "A direct recommendation with the material basis limitation beside the number it changes. No marker or tail block is required.",
+      "core": "Do not add to ACME.",
+      "blocks": [
+        {
+          "text": "Do not add to ACME.",
+          "adds": "the stance"
+        },
+        {
+          "text": "this buy moves it from 30% to about 38%, widening a position already past your own limit",
+          "adds": "the weight move, and that it crosses the user's own limit"
+        },
+        {
+          "text": "Because that book is 45 days old, I would revisit the call only if current prices materially change the concentration picture.",
+          "adds": "what would reopen the call"
+        },
+        {
+          "text": "Nothing has been executed.",
+          "adds": "the execution status"
+        }
+      ],
       "answer": "Do not add to ACME. On your recorded book, priced on cost rather than current market value, this buy moves it from 30% to about 38%, widening a position already past your own limit. Because that book is 45 days old, I would revisit the call only if current prices materially change the concentration picture. Nothing has been executed."
     },
     {
-      "id": "nothing_fired_no_block",
+      "id": "consider_no_material_change",
+      "surface": "consider",
       "kind": "positive",
-      "covers": ["D4"],
-      "note": "An answer whose numbers carry no triggered limitation ends at its last judgment. The absence of a block is the rule working, not an omission.",
-      "answer": "Your own rule caps a single name at 20%, and this buy leaves ACME at 12%, so nothing you wrote collides with it. The book stays inside every line you set.\n\nYour call — nothing has been executed."
+      "covers": [
+        "D4"
+      ],
+      "note": "An answer whose numbers carry no triggered limitation ends at its last judgment. The absence of an end block is the rule working, not an omission.",
+      "core": "Your own rule caps a single name at 20%, and this buy leaves ACME at 12%, so nothing you wrote collides with it.",
+      "blocks": [
+        {
+          "text": "Your own rule caps a single name at 20%, and this buy leaves ACME at 12%, so nothing you wrote collides with it.",
+          "adds": "the clearance, measured against the user's own cap"
+        },
+        {
+          "text": "Your call — nothing has been executed.",
+          "adds": "the execution status"
+        }
+      ],
+      "answer": "Your own rule caps a single name at 20%, and this buy leaves ACME at 12%, so nothing you wrote collides with it.\n\nYour call — nothing has been executed."
     },
     {
-      "id": "weekly_read_collected_limits",
+      "id": "consider_three_way_comparison",
+      "surface": "consider",
       "kind": "positive",
-      "covers": ["D1", "D5", "C1"],
-      "note": "A non-consider surface collects two related limitations in ordinary prose and then continues to the decision value.",
-      "answer": "Volatility rose through the week while your heaviest name was already flagged as too large. Both readings are frozen with the review rather than refreshed today, and valuation was not checked, so this is a concentration alert rather than a claim that the holding is expensive. Watch whether the name's weight and the volatility reading remain elevated next week."
-    },
-    {
-      "id": "engine_vocabulary_in_prose",
-      "kind": "negative",
-      "fails": "E-5",
-      "note": "C4. A payload token said at the user instead of what it means for the decision.",
-      "answer": "ACME goes from 30% to 38% after this buy, and the rule comes back already_over."
-    },
-    {
-      "id": "deletion_first_three_way_comparison",
-      "kind": "positive",
-      "covers": ["D1", "D2", "D4", "D7", "C1", "C2"],
-      "note": "#830 acceptance template 1. The same call that produced roughly 2,300 characters under the whitelist era. The stance opens it, the deciding reason is event risk rather than a concentration sermon, the counter-side exists only as the one line that could overturn the pick, and the book date, the price session and the unchecked valuation gap are one end block of one line each — never narrated twice.",
+      "covers": [
+        "D1",
+        "D2",
+        "D4",
+        "D7",
+        "C1",
+        "C2"
+      ],
+      "note": "#830 acceptance template 1, owner-approved. The same call produced roughly 2,300 characters under the whitelist era. The stance opens it, the deciding reason is event risk rather than a concentration sermon, the counter-side exists only as the one line that could overturn the pick, and the book date, the price session and the unchecked valuation gap are one end block of one line each — never narrated twice.",
+      "core": "三個裡我會選 GRDC 加 15 股。",
+      "blocks": [
+        {
+          "text": "三個裡我會選 GRDC 加 15 股。",
+          "adds": "the stance: which candidate, and at what size"
+        },
+        {
+          "text": "三案對組合的影響都在一個百分點內",
+          "adds": "that book impact does not separate the three"
+        },
+        {
+          "text": "WDGT 六天後出財報、預期已拉滿",
+          "adds": "the event risk that does separate them"
+        },
+        {
+          "text": "FABR 18 股只佔 1.2%",
+          "adds": "why the third candidate cannot move the result at that size"
+        },
+        {
+          "text": "反面就一條：前三大會從 51.3% 升到 51.9%",
+          "adds": "the counter-side, and that it is common to all three"
+        },
+        {
+          "text": "會讓我改口：你本來就想賭財報超預期",
+          "adds": "the falsifier that would reverse the ranking"
+        },
+        {
+          "text": "（帳本 8/14、價格 8/14 收盤；三案動用 $4.4K／$5.1K／$4.9K；估值未評）",
+          "adds": "the caliber block: book date, price session, cash used, the gap not evaluated"
+        }
+      ],
       "answer": "三個裡我會選 GRDC 加 15 股。決定性理由：三案對組合的影響都在一個百分點內——誰都不改變你的集中度——真正有差的只有事件風險：WDGT 六天後出財報、預期已拉滿（公司財報行事曆，2026-08-14），這時把最大倉再加大，是三案裡波動最大的；FABR 18 股只佔 1.2%，公司再好這個大小也改變不了結果。GRDC 下次財報在十月底，中間乾淨，上季主業 +82%（公司財報，2026-07-30）撐著。\n\n反面就一條：前三大會從 51.3% 升到 51.9%（GRDC 本來就是第二大）——嫌集中的話這是三案共同的問題，答案是減碼不是選誰。\n會讓我改口：你本來就想賭財報超預期——那 WDGT 反而是最直接的表達，排序整個反過來。\n\n（帳本 8/14、價格 8/14 收盤；三案動用 $4.4K／$5.1K／$4.9K；估值未評）"
     },
     {
-      "id": "deletion_first_recorded_consideration",
+      "id": "consider_recorded_consideration",
+      "surface": "consider",
       "kind": "positive",
-      "covers": ["D4", "D7"],
-      "note": "#830 acceptance template 2. A canonical write happened, so the considered-is-not-executed line is owed — and it is the whole answer. Nothing about the basis, the concentration family or the unchecked list appears, because nothing about them decides anything here.",
+      "covers": [
+        "D4",
+        "D7"
+      ],
+      "note": "#830 acceptance template 2, owner-approved. A canonical write happened, so the considered-is-not-executed line is owed — and it is the whole answer. Nothing about the basis, the concentration family or the unchecked list appears, because none of it decides anything here.",
+      "core": "記好了：GRDC 買 15 股（@8/14 收盤 $312.40）已存成一筆考慮紀錄",
+      "blocks": [
+        {
+          "text": "記好了：GRDC 買 15 股（@8/14 收盤 $312.40）已存成一筆考慮紀錄",
+          "adds": "what was written, and at what price"
+        },
+        {
+          "text": "記的是「你考慮過並選了它」，不是「已成交」",
+          "adds": "that the record is a consideration, never an execution"
+        },
+        {
+          "text": "比較用的另外兩案沒有留下任何正式紀錄。",
+          "adds": "that the rejected candidates left no canonical row"
+        }
+      ],
       "answer": "記好了：GRDC 買 15 股（@8/14 收盤 $312.40）已存成一筆考慮紀錄——記的是「你考慮過並選了它」，不是「已成交」；真的成交後把交易紀錄丟給我接上。比較用的另外兩案沒有留下任何正式紀錄。"
     },
     {
-      "id": "deletion_first_no_book_single_name",
+      "id": "consider_funding_shortfall",
+      "surface": "consider",
       "kind": "positive",
-      "covers": ["D1", "D2", "D4", "D7", "C1", "C2"],
-      "note": "#830 acceptance template 3. No recorded book, so every book-derived claim is refused — and the answer still lands a stance, names the gap that decides it, and attaches a falsifier the user could actually write down. The two limits that remain are one end-block line.",
+      "covers": [
+        "D2",
+        "D4",
+        "D7",
+        "C1"
+      ],
+      "note": "#778's acceptance shape. A negative post-trade cash balance is owed as two numbers, and the decision those numbers imply — this needs funding or a sale — is what the top floor carries. The boundary that the engine cannot see accounts outside the recorded book is still stated, once, beside the claim it qualifies, rather than becoming the lead.",
+      "core": "這筆要成立，你得先賣掉一些東西，或者動用這本帳本看不到的現金",
+      "blocks": [
+        {
+          "text": "這筆要成立，你得先賣掉一些東西，或者動用這本帳本看不到的現金",
+          "adds": "the funding decision the negative balance implies"
+        },
+        {
+          "text": "買完帳上現金是 −$8,400（佔帳本 −2.1%）",
+          "adds": "the two cash numbers, with the denominator they are measured on"
+        },
+        {
+          "text": "我看不到你在別處的餘額",
+          "adds": "the boundary: balances outside the recorded book, stated once"
+        },
+        {
+          "text": "最小的一刀是減掉現在最大的那筆的三分之一",
+          "adds": "the smallest in-book action that would fund it"
+        },
+        {
+          "text": "會讓我改口：你告訴我這本帳本之外有可動用現金",
+          "adds": "the falsifier"
+        },
+        {
+          "text": "（帳本 8/14；價格 8/14 收盤；未評估稅務與賣出成本）",
+          "adds": "the caliber block"
+        }
+      ],
+      "answer": "這筆要成立，你得先賣掉一些東西，或者動用這本帳本看不到的現金——這不是「要不要買 GRDC」的問題，是錢從哪來的問題。\n\n買完帳上現金是 −$8,400（佔帳本 −2.1%），代表記錄裡的現金付不起這筆；我看不到你在別處的餘額，所以這只說明帳本內不足，不代表你沒錢。要在帳本內成立，最小的一刀是減掉現在最大的那筆的三分之一。\n會讓我改口：你告訴我這本帳本之外有可動用現金——那這就只是記錄不全，不是資金缺口。\n\n（帳本 8/14；價格 8/14 收盤；未評估稅務與賣出成本）"
+    },
+    {
+      "id": "no_book_single_name",
+      "surface": "no_book",
+      "kind": "positive",
+      "covers": [
+        "D1",
+        "D2",
+        "D4",
+        "D7",
+        "C1",
+        "C2"
+      ],
+      "note": "#830 acceptance template 3, owner-approved. No recorded book, so every book-derived claim is refused — and the answer still lands a stance, names the gap that decides it, and attaches a falsifier the user could actually write down. The two limits that remain are one end-block line.",
+      "core": "WDGT 這家公司的證據支持買，但「現在進場」我不背書——缺的是估值，不是基本面。",
+      "blocks": [
+        {
+          "text": "WDGT 這家公司的證據支持買，但「現在進場」我不背書——缺的是估值，不是基本面。",
+          "adds": "the split stance: the company yes, the timing not endorsed"
+        },
+        {
+          "text": "上季營收 +24%、EPS 超預期、同日上修全年（公司新聞稿，2026-07-24）",
+          "adds": "the sourced operating evidence behind the first half"
+        },
+        {
+          "text": "我查不到現在的估值倍數",
+          "adds": "the gap that decides the second half"
+        },
+        {
+          "text": "$5,000 試水溫，真正的洞在出場",
+          "adds": "the size, and where the real hole is"
+        },
+        {
+          "text": "「故事變了就賣」跟你的進場理由是同一個變數",
+          "adds": "why the user's own exit is not an independent line"
+        },
+        {
+          "text": "全年營收財測或毛利率轉向，擇一寫下來，就可以進場。",
+          "adds": "the checkable substitute that unblocks entry"
+        },
+        {
+          "text": "（價 8/14 收盤 $188.20；你未提供持倉，部位佔比與重疊無法評）",
+          "adds": "the caliber block"
+        }
+      ],
       "answer": "WDGT 這家公司的證據支持買，但「現在進場」我不背書——缺的是估值，不是基本面。上季營收 +24%、EPS 超預期、同日上修全年（公司新聞稿，2026-07-24），這是硬的；但這些已公開三週，而我查不到現在的估值倍數，「好消息是否已在價格裡」這一半我答不了。\n\n$5,000 試水溫，真正的洞在出場：「故事變了就賣」跟你的進場理由是同一個變數，等於沒有獨立的認錯線。可檢查的替代就用它自己簽的支票：全年營收財測或毛利率轉向，擇一寫下來，就可以進場。\n\n（價 8/14 收盤 $188.20；你未提供持倉，部位佔比與重疊無法評）"
     },
     {
+      "id": "no_book_strategy_class",
+      "surface": "no_book",
+      "kind": "positive",
+      "covers": [
+        "D4",
+        "C1"
+      ],
+      "note": "This route's one derivation from §3, working: with no book the top sentence is a research-backed baseline rather than a computed consequence, and the strategy-class map is a middle-floor block set. The user is not made to invent an exit philosophy before the bounded value reaches them.",
+      "core": "這筆錢的預設答案是廣泛分散、低換手，理由只有一個：你說的用途是十年以上、沒有指定的集中優勢。",
+      "blocks": [
+        {
+          "text": "這筆錢的預設答案是廣泛分散、低換手，理由只有一個：你說的用途是十年以上、沒有指定的集中優勢。",
+          "adds": "the research-backed baseline, as the answer"
+        },
+        {
+          "text": "長期標籤不會讓股票變安全",
+          "adds": "the material exception that rides that baseline"
+        },
+        {
+          "text": "掛著指數或 ETF 也不代表曝險真的分散",
+          "adds": "the composition fact that would settle the classification"
+        },
+        {
+          "text": "如果這筆錢其實是你刻意要做的一次學習型交易",
+          "adds": "the one branch that would change the class"
+        },
+        {
+          "text": "（研究基線；你未提供持倉與流動性期限，適配度無法評）",
+          "adds": "the caliber block"
+        }
+      ],
+      "answer": "這筆錢的預設答案是廣泛分散、低換手，理由只有一個：你說的用途是十年以上、沒有指定的集中優勢。\n\n這是研究支持的基線，不是我替你挑的產品：長期標籤不會讓股票變安全，掛著指數或 ETF 也不代表曝險真的分散——要確認得看它成分的集中度。\n如果這筆錢其實是你刻意要做的一次學習型交易，那基線整個不適用，治理要換成你自己定義的可觀察條件。\n\n（研究基線；你未提供持倉與流動性期限，適配度無法評）"
+    },
+    {
+      "id": "no_book_advancing_question",
+      "surface": "no_book",
+      "kind": "positive",
+      "covers": [
+        "D4"
+      ],
+      "note": "A question that separates two live branches, asked after the available analysis rather than instead of it. One question, not a questionnaire.",
+      "core": "以你給的條件，我會先買一半、剩下一半等你把出場條件寫下來再進——卡住的是出場，不是標的。",
+      "blocks": [
+        {
+          "text": "以你給的條件，我會先買一半、剩下一半等你把出場條件寫下來再進——卡住的是出場，不是標的。",
+          "adds": "the staged stance, and what is actually blocking it"
+        },
+        {
+          "text": "進場理由（新產品線放量）你已經寫得夠具體，可以驗證",
+          "adds": "why the entry side is already good enough"
+        },
+        {
+          "text": "出場你只說「不行就走」，那不是條件，是心情。",
+          "adds": "why the exit side is not"
+        },
+        {
+          "text": "只有一個問題會改變上面的建議",
+          "adds": "the single branching question, asked after the value"
+        },
+        {
+          "text": "（你未提供持倉；部位佔比與重疊無法評）",
+          "adds": "the caliber block"
+        }
+      ],
+      "answer": "以你給的條件，我會先買一半、剩下一半等你把出場條件寫下來再進——卡住的是出場，不是標的。\n\n進場理由（新產品線放量）你已經寫得夠具體，可以驗證；出場你只說「不行就走」，那不是條件，是心情。\n只有一個問題會改變上面的建議：這筆錢在未來十二個月內有沒有指定用途？有的話，先買一半也太多。\n\n（你未提供持倉；部位佔比與重疊無法評）"
+    },
+    {
+      "id": "freeform_cash_question",
+      "surface": "freeform",
+      "kind": "positive",
+      "covers": [
+        "D2",
+        "D4",
+        "D7"
+      ],
+      "note": "The smallest shape the pyramid takes: one sentence that answers and says what the number buys, one caliber line, nothing else. A question with no action in it still gets a top floor.",
+      "core": "帳上現金 $12,300，佔帳本 3.4%——夠你做一筆一般大小的加碼，不夠做兩筆。",
+      "blocks": [
+        {
+          "text": "帳上現金 $12,300，佔帳本 3.4%——夠你做一筆一般大小的加碼，不夠做兩筆。",
+          "adds": "the number, and what it buys"
+        },
+        {
+          "text": "（帳本 8/14；價格 8/14 收盤；未計入未交割款）",
+          "adds": "the caliber block"
+        }
+      ],
+      "answer": "帳上現金 $12,300，佔帳本 3.4%——夠你做一筆一般大小的加碼，不夠做兩筆。\n\n（帳本 8/14；價格 8/14 收盤；未計入未交割款）"
+    },
+    {
+      "id": "freeform_positions_view",
+      "surface": "freeform",
+      "kind": "positive",
+      "covers": [
+        "D4",
+        "D7"
+      ],
+      "note": "The bottom floor as a door rather than a section. The per-holding table is computed and available; the answer offers it once and does not preview it. Not printing six rows nobody's decision turns on is not hiding them.",
+      "core": "六檔裡只有一檔值得你現在看：GRDC 佔 31.4%，其餘五檔全在 10% 以下。",
+      "blocks": [
+        {
+          "text": "六檔裡只有一檔值得你現在看：GRDC 佔 31.4%，其餘五檔全在 10% 以下。",
+          "adds": "the one position that matters, and the shape of the rest"
+        },
+        {
+          "text": "最大的那筆已經是第二大的三倍",
+          "adds": "how far the concentration actually runs"
+        },
+        {
+          "text": "要完整的逐檔表（股數、成本、市值、損益、診斷標籤）跟我說一聲就給。",
+          "adds": "the expansion offer, made once"
+        },
+        {
+          "text": "（帳本 8/14；價格 8/14 收盤；ETF 未拆解，成分重疊未評）",
+          "adds": "the caliber block"
+        }
+      ],
+      "answer": "六檔裡只有一檔值得你現在看：GRDC 佔 31.4%，其餘五檔全在 10% 以下。\n\n最大的那筆已經是第二大的三倍，其他五檔加起來還不到它。要完整的逐檔表（股數、成本、市值、損益、診斷標籤）跟我說一聲就給。\n\n（帳本 8/14；價格 8/14 收盤；ETF 未拆解，成分重疊未評）"
+    },
+    {
+      "id": "freeform_degraded_pricing",
+      "surface": "freeform",
+      "kind": "positive",
+      "covers": [
+        "D2",
+        "D4",
+        "C1"
+      ],
+      "note": "A refusal that still answers. The portfolio consequence is refused rather than computed on cost weights, and the judgment that survives without the missing price still leads. What would unblock it is named.",
+      "core": "現在這個問題我答不了，而且不打算用成本價硬答——成本口徑會讓最大的那筆換人。",
+      "blocks": [
+        {
+          "text": "現在這個問題我答不了，而且不打算用成本價硬答——成本口徑會讓最大的那筆換人。",
+          "adds": "the refusal, and why answering on cost would be worse than refusing"
+        },
+        {
+          "text": "你把它的收盤價貼給我，這題三十秒就有答案",
+          "adds": "what would unblock it"
+        },
+        {
+          "text": "不看價格，這筆的股數本身就已經超過你自己寫的單一持股上限",
+          "adds": "the judgment that survives without the missing price"
+        },
+        {
+          "text": "（缺 FABR 收盤，查過發行商頁與交易所頁）",
+          "adds": "the caliber block"
+        }
+      ],
+      "answer": "現在這個問題我答不了，而且不打算用成本價硬答——成本口徑會讓最大的那筆換人。\n\n我查了兩個公開來源都沒有 FABR 今天的收盤；你把它的收盤價貼給我，這題三十秒就有答案。在那之前能講的是：不看價格，這筆的股數本身就已經超過你自己寫的單一持股上限。\n\n（缺 FABR 收盤，查過發行商頁與交易所頁）"
+    },
+    {
+      "id": "weekly_read_connection",
+      "surface": "weekly_read",
+      "kind": "positive",
+      "covers": [
+        "D1",
+        "D5",
+        "C1"
+      ],
+      "note": "A non-consider surface collects two related limitations in ordinary prose and then continues to the decision value. The connection between the frozen market reading and a diagnosed holding is the whole point of the block.",
+      "core": "Volatility rose through the week while your heaviest name was already flagged as too large.",
+      "blocks": [
+        {
+          "text": "Volatility rose through the week while your heaviest name was already flagged as too large.",
+          "adds": "the one connection between the frozen reading and the book"
+        },
+        {
+          "text": "Both readings are frozen with the review rather than refreshed today, and valuation was not checked, so this is a concentration alert rather than a claim that the holding is expensive.",
+          "adds": "the bound on what the alert claims"
+        },
+        {
+          "text": "Watch whether the name's weight and the volatility reading remain elevated next week.",
+          "adds": "the next-week check"
+        }
+      ],
+      "answer": "Volatility rose through the week while your heaviest name was already flagged as too large. Both readings are frozen with the review rather than refreshed today, and valuation was not checked, so this is a concentration alert rather than a claim that the holding is expensive. Watch whether the name's weight and the volatility reading remain elevated next week."
+    },
+    {
+      "id": "weekly_read_no_connection",
+      "surface": "weekly_read",
+      "kind": "positive",
+      "covers": [
+        "D4"
+      ],
+      "note": "Either missing side means the whole block is omitted, never replaced by a generic market recap. The absence is the answer, and it is said in one sentence rather than apologised for in three.",
+      "core": "Nothing in this week's frozen readings connects to a position you hold, so there is no market block this week.",
+      "blocks": [
+        {
+          "text": "Nothing in this week's frozen readings connects to a position you hold, so there is no market block this week.",
+          "adds": "the absence, stated as the answer"
+        },
+        {
+          "text": "Your heaviest name is inside its own diagnosis and the volatility delta over the review window is flat.",
+          "adds": "the two readings that produced the absence"
+        },
+        {
+          "text": "Next week's check is unchanged: whether that name's weight moves.",
+          "adds": "the standing check"
+        }
+      ],
+      "answer": "Nothing in this week's frozen readings connects to a position you hold, so there is no market block this week. Your heaviest name is inside its own diagnosis and the volatility delta over the review window is flat.\n\nNext week's check is unchanged: whether that name's weight moves."
+    },
+    {
+      "id": "weekly_read_focus_followup",
+      "surface": "weekly_read",
+      "kind": "positive",
+      "covers": [
+        "D4",
+        "C1"
+      ],
+      "note": "The second response after the user answers the one optional question. It carries a visibly different current-session watch and asks nothing further — the surface's one derivation, which is about sequencing, not shape.",
+      "core": "On the focus you picked, the weight — not the volatility — is what moved",
+      "blocks": [
+        {
+          "text": "On the focus you picked, the weight — not the volatility — is what moved",
+          "adds": "which of the two drivers moved"
+        },
+        {
+          "text": "the position gained four points of the book over the window while the volatility reading was flat",
+          "adds": "the two frozen numbers behind that"
+        },
+        {
+          "text": "That makes this a sizing question rather than a market-timing one.",
+          "adds": "what the finding reclassifies the concern as"
+        },
+        {
+          "text": "Next week's check moves with it: whether the weight holds above the line you set, measured at the same session.",
+          "adds": "the changed watch, which is what makes this response different from the first"
+        }
+      ],
+      "answer": "On the focus you picked, the weight — not the volatility — is what moved: the position gained four points of the book over the window while the volatility reading was flat.\n\nThat makes this a sizing question rather than a market-timing one. Next week's check moves with it: whether the weight holds above the line you set, measured at the same session."
+    },
+    {
+      "id": "engine_vocabulary_in_prose",
+      "surface": "consider",
+      "kind": "negative",
+      "fails": "E-5",
+      "note": "C4. A payload token said at the user instead of what it means for the decision.",
+      "core": "ACME goes from 30% to 38% after this buy",
+      "blocks": [
+        {
+          "text": "ACME goes from 30% to 38% after this buy",
+          "adds": "the weight move"
+        },
+        {
+          "text": "the rule comes back already_over",
+          "adds": "the rule's state"
+        }
+      ],
+      "answer": "ACME goes from 30% to 38% after this buy, and the rule comes back already_over."
+    },
+    {
       "id": "machine_anchor_rendered",
+      "surface": "consider",
       "kind": "negative",
       "fails": "E-6",
       "note": "D7's bottom floor. The book's content hash exists so a QA run can compare what the user saw against the frozen payload; there is no register in which a person wants it. Say which day the book was true instead.",
+      "core": "GRDC 加 15 股，前三大從 51.3% 升到 51.9%。",
+      "blocks": [
+        {
+          "text": "GRDC 加 15 股，前三大從 51.3% 升到 51.9%。",
+          "adds": "the stance and the concentration move"
+        },
+        {
+          "text": "本次計算所依據的帳本版本為",
+          "adds": "which version of the book the numbers came from"
+        }
+      ],
       "answer": "GRDC 加 15 股，前三大從 51.3% 升到 51.9%。本次計算所依據的帳本版本為 pb-v1:9f2c41ab7d3e8056c1b4fa27de90583716c4ad2b9e70f18c53a6db4491e2073f。"
+    },
+    {
+      "id": "bloat_no_core",
+      "surface": "consider",
+      "kind": "negative",
+      "fails": "E-7",
+      "note": "The whitelist era's cheapest discharge, on the same call `consider_three_way_comparison` answers. Every block is true, anchored and distinct — E-8 passes — and the answer never says which one to buy, so the reader finishes it holding nothing. This is the witness #832 requires: a complete answer with no core fails, or a green suite reads as a governed output. It also carries the `default_as_insight` ban, on the exact sentence both arms of the #827 A/B independently wrote.",
+      "ban": "default_as_insight",
+      "core": "三個裡我會選 GRDC 加 15 股。",
+      "blocks": [
+        {
+          "text": "先說明這次計算的基礎",
+          "adds": "the basis recital"
+        },
+        {
+          "text": "前三大目前 51.3%",
+          "adds": "the concentration family"
+        },
+        {
+          "text": "各方案的現金影響",
+          "adds": "the cash family"
+        },
+        {
+          "text": "WDGT 六天後出財報",
+          "adds": "the event calendar"
+        },
+        {
+          "text": "估值我沒有查",
+          "adds": "the unchecked enumeration"
+        },
+        {
+          "text": "最後還是要看你自己的偏好",
+          "adds": "the handback"
+        }
+      ],
+      "answer": "先說明這次計算的基礎：帳本資料到 8/14，價格用 8/14 收盤，三個方案都用同一組口徑。\n\n先看集中度。前三大目前 51.3%。WDGT 方案後前三大 51.8%，GRDC 方案後 51.9%，FABR 方案後 51.5%。三個方案的前三大變動都在一個百分點以內。系統的集中度警戒線是 50%，你目前已經在線上，這三個方案都不會讓你更接近或更遠離那條線太多——不過那條線是系統預設，不是你自己設的。\n\n各方案的現金影響：WDGT $4.4K、GRDC $5.1K、FABR $4.9K。買完帳上現金分別剩 $8.2K、$7.5K、$7.7K。\n\n事件方面：WDGT 六天後出財報，GRDC 下次財報在十月底，FABR 沒有近期排定事件。\n\n估值我沒有查，流動性我沒有查，稅務我沒有查，部位適配度我沒有查。\n\n三個方案各有優缺點，最後還是要看你自己的偏好。"
+    },
+    {
+      "id": "funding_shortfall_recited_not_decided",
+      "surface": "consider",
+      "kind": "negative",
+      "fails": "E-7",
+      "note": "#778, as delivered. The two cash numbers are owed and they are stated; the decision they imply — this needs funding or a sale — never is, and what fills the opening is the boundary plus hedging about what the engine can and cannot see. The owner read this answer and said the key thing is probably whether the decision requires selling stock, rather than a pile of hedging. The declared core is the one `consider_funding_shortfall` leads with, on the same call.",
+      "core": "這筆要成立，你得先賣掉一些東西，或者動用這本帳本看不到的現金",
+      "blocks": [
+        {
+          "text": "買完帳上現金是 −$8,400",
+          "adds": "the post-trade cash balance"
+        },
+        {
+          "text": "佔帳本 −2.1%",
+          "adds": "its weight in the book"
+        },
+        {
+          "text": "這只代表記錄裡的現金不足",
+          "adds": "what the number does and does not mean"
+        },
+        {
+          "text": "我沒有辦法知道你在別處還有沒有錢",
+          "adds": "the boundary on accounts outside the book"
+        },
+        {
+          "text": "這一點請你自己判斷",
+          "adds": "the handback"
+        }
+      ],
+      "answer": "買完帳上現金是 −$8,400，佔帳本 −2.1%。\n\n需要說明的是，這只代表記錄裡的現金不足，並不代表你真的沒有錢——我沒有辦法知道你在別處還有沒有錢，也沒有辦法知道這本帳本是不是涵蓋你的全部帳戶。所以這個負數要怎麼解讀，這一點請你自己判斷。\n\n（帳本 8/14；價格 8/14 收盤）"
+    },
+    {
+      "id": "manufactured_scenario",
+      "surface": "consider",
+      "kind": "negative",
+      "fails": "E-8",
+      "ban": "manufactured_scenario",
+      "note": "The all-in-one-name simulation the owner called meaningless. The stance and the caliber block are fine; the middle block is a scene invented to carry numbers that had nowhere else to go, and it declares no increment because there is none to declare — the user asked about three specific sizes.",
+      "core": "GRDC 加 15 股可以做，決定性理由是它是三案裡唯一沒有近期事件風險的。",
+      "blocks": [
+        {
+          "text": "GRDC 加 15 股可以做，決定性理由是它是三案裡唯一沒有近期事件風險的。",
+          "adds": "the stance and the deciding reason"
+        },
+        {
+          "text": "舉個例子你就有感覺了：假設你把整筆資金 $5.1K 全押在 WDGT 一檔上",
+          "adds": null
+        },
+        {
+          "text": "（帳本 8/14；價格 8/14 收盤；估值未評）",
+          "adds": "the caliber block"
+        }
+      ],
+      "answer": "GRDC 加 15 股可以做，決定性理由是它是三案裡唯一沒有近期事件風險的。\n\n舉個例子你就有感覺了：假設你把整筆資金 $5.1K 全押在 WDGT 一檔上，前三大會從 51.3% 一路升到 53.8%，而如果反過來全押 FABR，前三大反而只到 51.4%——當然這兩種做法你都沒有問，我只是讓你感受一下差距。\n\n（帳本 8/14；價格 8/14 收盤；估值未評）"
+    },
+    {
+      "id": "restated_point",
+      "surface": "consider",
+      "kind": "negative",
+      "fails": "E-8",
+      "ban": "restated_point",
+      "note": "The closing summary is the opening judgment in a second form. Nothing in it is wrong, and the reader pays twice for one increment, which is why the two blocks declare the same one.",
+      "core": "GRDC 加 15 股，決定性理由是它是三案裡唯一沒有排定事件的。",
+      "blocks": [
+        {
+          "text": "GRDC 加 15 股，決定性理由是它是三案裡唯一沒有排定事件的。",
+          "adds": "the deciding reason: only this candidate has no scheduled event"
+        },
+        {
+          "text": "WDGT 六天後出財報、預期已拉滿",
+          "adds": "the event risk sitting on the largest position"
+        },
+        {
+          "text": "總結一下：GRDC 之所以勝出，就是因為只有它在接下來這段時間沒有排定的事件。",
+          "adds": "the deciding reason: only this candidate has no scheduled event"
+        },
+        {
+          "text": "（帳本 8/14；價格 8/14 收盤；估值未評）",
+          "adds": "the caliber block"
+        }
+      ],
+      "answer": "GRDC 加 15 股，決定性理由是它是三案裡唯一沒有排定事件的。\n\nWDGT 六天後出財報、預期已拉滿，這時把最大倉再加大是三案裡波動最大的；FABR 只佔 1.2%，這個大小改變不了結果。\n\n總結一下：GRDC 之所以勝出，就是因為只有它在接下來這段時間沒有排定的事件。\n\n（帳本 8/14；價格 8/14 收盤；估值未評）"
+    },
+    {
+      "id": "hedging_couplet_invisible_to_the_oracle",
+      "surface": "consider",
+      "kind": "counter",
+      "ban": "hedging_couplet",
+      "note": "Stance on top, distinct increments, one caliber block — every assertion passes, and the answer still hands the reader back the decision it was asked to make. Deciding that 「這不是要你等，但也不是說完全不用在意」 withdraws its own position requires reading what the sentence means. This scene is the coverage boundary, asserted rather than assumed: it must keep passing until an oracle exists that can honestly catch it.",
+      "core": "GRDC 加 15 股，決定性理由是三案裡只有它接下來沒有排定事件。",
+      "blocks": [
+        {
+          "text": "GRDC 加 15 股，決定性理由是三案裡只有它接下來沒有排定事件。",
+          "adds": "the stance and the deciding reason"
+        },
+        {
+          "text": "前三大會從 51.3% 升到 51.9%",
+          "adds": "the concentration move"
+        },
+        {
+          "text": "（帳本 8/14；價格 8/14 收盤；估值未評）",
+          "adds": "the caliber block"
+        }
+      ],
+      "answer": "GRDC 加 15 股，決定性理由是三案裡只有它接下來沒有排定事件。\n\n前三大會從 51.3% 升到 51.9%，這不是要你等，但也不是說完全不用在意；如果你覺得太集中，那是三案共同的問題，不過也可能只是你這陣子看盤看太多。\n\n（帳本 8/14；價格 8/14 收盤；估值未評）"
+    },
+    {
+      "id": "default_as_insight_invisible_to_the_oracle",
+      "surface": "consider",
+      "kind": "counter",
+      "ban": "default_as_insight",
+      "note": "A well-formed answer whose second block explains the engine's own threshold as though it were a finding about the user's book. The block is true, distinct and in place, so nothing mechanical objects; only a reader who knows the line is a system default and not the user's own rule can tell. The user's own cap is the opposite case and stays hard-mandated.",
+      "core": "GRDC 加 15 股，決定性理由是三案裡只有它接下來沒有排定事件。",
+      "blocks": [
+        {
+          "text": "GRDC 加 15 股，決定性理由是三案裡只有它接下來沒有排定事件。",
+          "adds": "the stance and the deciding reason"
+        },
+        {
+          "text": "順帶一提，系統的集中度警戒線是 50%",
+          "adds": "where the engine's default threshold sits"
+        },
+        {
+          "text": "（帳本 8/14；價格 8/14 收盤；估值未評）",
+          "adds": "the caliber block"
+        }
+      ],
+      "answer": "GRDC 加 15 股，決定性理由是三案裡只有它接下來沒有排定事件。\n\n順帶一提，系統的集中度警戒線是 50%，你目前 51.3% 已經在線上——不過那條線是系統預設，不是你自己設的，所以它本身不構成理由。\n\n（帳本 8/14；價格 8/14 收盤；估值未評）"
     }
   ]
 }
