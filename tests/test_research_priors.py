@@ -17,11 +17,20 @@ def _section(text, heading):
 
 
 def _answer_default_is_valid(section):
+    # #832 retired the local sentence this used to pin ("lead with the bounded
+    # value already supported"). That sentence was one of six independent
+    # phrasings of answer-first, and the rule it stated now lives once, in
+    # `docs/expression-contract.md`'s mother chapter. What it *protected* --
+    # the user sees the bounded value before any intake question -- is pinned
+    # harder than before: the route's own block order must run baseline ->
+    # map -> question, in that order, and must declare itself a derivation of
+    # the shape rather than a second statement of it.
     baseline = "research-backed baseline"
     strategy_map = "applicable strategy-class map"
+    question = "any question whose answer could change the recommendation"
     return (
-        section.index(baseline) < section.index(strategy_map)
-        and "lead with the bounded value already supported" in section
+        section.index(baseline) < section.index(strategy_map) < section.index(question)
+        and "the parameter it adds to the pyramid" in section
         and "Ask only questions that separate remaining live branches" in section
         and "there is no universal count or last-slot rule" in section
         and "No question is allowed before" not in section
