@@ -218,6 +218,13 @@ leads with and the increment each of its blocks adds, plus counter-exemplars
 for the named bans. Every issuer in them is fictional (Widgetron WDGT,
 Gridcore GRDC, Fabrion FABR, ACME) and nothing is derived from a user record.
 
+Since #834 the corpus is not the only place they live. Each conversational
+surface's reference file **opens with its own copy of one of them**, so the
+example is met while an answer is being written rather than only while one is
+being graded. The two copies are one text, not two:
+`tests/test_expression_contract.py` compares each reference block against the
+scene its fence names and fails on drift.
+
 `tests/agent/check_expression.py` derives E-7 and E-8 from that corpus (§7).
 What they decide is exactly two things — that the declared answer really leads,
 and that every declared block really adds a distinct increment — and the

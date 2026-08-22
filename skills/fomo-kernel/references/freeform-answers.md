@@ -1,5 +1,26 @@
 # Freeform informational answers
 
+## The exemplar
+
+One whole freeform answer. This route adds no parameter of its own (rule 4
+below), so the exemplar is what this file has to show: the one position the
+question turns on, the rest of the computed inventory behind a single offer,
+and one end block. Read it before writing one.
+
+It is copied verbatim from `tests/agent/expression-witnesses.json`, scene
+`freeform_positions_view` — the corpus that
+[expression-contract.md](../../../docs/expression-contract.md) §3.5 makes the
+binding statement of this shape. Every issuer in it is invented, and
+`tests/test_expression_contract.py` fails if the two copies disagree.
+
+```exemplar freeform_positions_view
+六檔裡只有一檔值得你現在看：GRDC 佔 31.4%，其餘五檔全在 10% 以下。
+
+最大的那筆已經是第二大的三倍，其他五檔加起來還不到它。要完整的逐檔表（股數、成本、市值、損益、診斷標籤）跟我說一聲就給。
+
+（帳本 8/14；價格 8/14 收盤；ETF 未拆解，成分重疊未評）
+```
+
 The user does not only meet this product through `prepare → preview →
 finalize`. They ask ad hoc questions mid-conversation — "what's my portfolio
 worth right now," "how much cash do I have," "what if I add to this" — and

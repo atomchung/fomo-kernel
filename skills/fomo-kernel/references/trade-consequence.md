@@ -1,5 +1,27 @@
 # Weighing a trade the user has not placed yet
 
+## The exemplar
+
+One whole `consider` answer, over a three-candidate comparison: the stance and
+its deciding reason on top, the counter-side present only as the line that could
+overturn the pick, and the book date, the price session and the unevaluated
+valuation gap as one end block. Read it before writing one.
+
+It is copied verbatim from `tests/agent/expression-witnesses.json`, scene
+`consider_three_way_comparison` — the corpus that
+[expression-contract.md](../../../docs/expression-contract.md) §3.5 makes the
+binding statement of this shape. Every issuer in it is invented, and
+`tests/test_expression_contract.py` fails if the two copies disagree.
+
+```exemplar consider_three_way_comparison
+三個裡我會選 GRDC 加 15 股。決定性理由：三案對組合的影響都在一個百分點內——誰都不改變你的集中度——真正有差的只有事件風險：WDGT 六天後出財報、預期已拉滿（公司財報行事曆，2026-08-14），這時把最大倉再加大，是三案裡波動最大的；FABR 18 股只佔 1.2%，公司再好這個大小也改變不了結果。GRDC 下次財報在十月底，中間乾淨，上季主業 +82%（公司財報，2026-07-30）撐著。
+
+反面就一條：前三大會從 51.3% 升到 51.9%（GRDC 本來就是第二大）——嫌集中的話這是三案共同的問題，答案是減碼不是選誰。
+會讓我改口：你本來就想賭財報超預期——那 WDGT 反而是最直接的表達，排序整個反過來。
+
+（帳本 8/14、價格 8/14 收盤；三案動用 $4.4K／$5.1K／$4.9K；估值未評）
+```
+
 A user mid-decision asks something like *"I'm thinking of buying NVDA — what does that do to my book?"* They are not in a review and will not hand over a CSV. `consider` answers from what the product already stores: the local ledger, or transaction files if you have them in hand.
 
 This is Layer 2 (docs/decision-fomo-kernel-shape.md §3-4): deterministic arithmetic over a hypothetical trade. The engine computes the consequence; the agent turns it and any relevant sourced evidence into an explicit recommendation. The recommendation is `agent_judgment`, never a disguised engine output or execution claim.

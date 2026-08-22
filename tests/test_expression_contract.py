@@ -75,6 +75,13 @@ CITATION_IDS = tuple(f"C{number}" for number in range(1, 5))
 INSTRUCTION_ONLY_IDS = tuple(f"D{number}" for number in range(1, 7)) + ("C3",)
 ROW_RE = re.compile(r"^\|\s*([DC]\d+)\s*\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|$", re.M)
 
+# #834: the exemplar's second home. A fence tagged `exemplar` plus the scene id
+# it copies is the whole marker format -- one line, no counting, and the id
+# travels with the text rather than sitting in a table beside it.
+EXEMPLAR_FENCE = re.compile(
+    r"^```exemplar (?P<scene>[a-z0-9_]+)\n(?P<body>.*?)\n```$", re.M | re.S)
+REFERENCE_IN_SURFACE = re.compile(r"references/(?P<name>[a-z0-9-]+\.md)")
+
 def _load_checker():
     if "check_expression" in sys.modules:
         return sys.modules["check_expression"]
@@ -287,6 +294,106 @@ def test_the_checker_derives_its_blacklist_from_the_schemas():
     assert checker.internal_tokens(pathlib.Path(os.devnull).parent / "nowhere") == ()
 
 
+# ───── 3b. the exemplar on the generation path is the corpus copy (#834) ─────
+
+
+def _corpus():
+    return json.loads(WITNESSES.read_text(encoding="utf-8"))
+
+
+def _normalized(text):
+    """Trailing whitespace and the fence's own padding are not drift."""
+    return "\n".join(line.rstrip() for line in text.strip().split("\n"))
+
+
+def _exemplars(text):
+    """Every `(scene_id, body)` an exemplar fence declares, in order.
+
+    The fence carries its scene id in the info string, so extraction needs no
+    line offsets, no heading walk, and no second list of which file holds
+    which exemplar.
+    """
+    return [(match.group("scene"), match.group("body"))
+            for match in EXEMPLAR_FENCE.finditer(text)]
+
+
+def test_every_surface_reference_opens_with_its_canonical_exemplar():
+    """#834. Before it, the exemplars existed only in the QC layer: the model
+    never saw one while generating, and prose norms alone did not bind scale.
+    Each surface reference now opens with its own copy.
+
+    The pairing is read from the two declarations that already existed -- the
+    corpus's `surfaces` map names the reference file that owns each surface,
+    and the reference file's own fence names the scene -- so this compares
+    them rather than adding a third list to keep in step.
+    """
+    corpus = _corpus()
+    scenes = {scene["id"]: scene for scene in corpus["scenes"]}
+    for surface, description in corpus["surfaces"].items():
+        named = REFERENCE_IN_SURFACE.findall(description)
+        assert len(named) == 1, (
+            f"the corpus surface {surface!r} names {len(named)} reference files; "
+            "exactly one owns it")
+        path = REFERENCES / named[0]
+        assert path.is_file(), f"surface {surface!r} names a missing file: {named[0]}"
+        text = path.read_text(encoding="utf-8")
+        found = _exemplars(text)
+        assert len(found) == 1, (
+            f"{path.relative_to(ROOT)} carries {len(found)} exemplar blocks, not one")
+        headings = [match.start() for match in re.finditer(r"^## ", text, re.M)]
+        fence = text.index("```exemplar ")
+        assert headings and headings[0] < fence and (
+            len(headings) == 1 or fence < headings[1]), (
+            f"{path.relative_to(ROOT)} does not open with its exemplar; progressive "
+            "disclosure only helps if the example is what the reader meets first")
+        scene_id, body = found[0]
+        scene = scenes.get(scene_id)
+        assert scene is not None, (
+            f"{path.relative_to(ROOT)} names scene {scene_id!r}, absent from the corpus")
+        assert scene["surface"] == surface, (
+            f"{path.relative_to(ROOT)} opens with a {scene['surface']!r} exemplar")
+        assert scene["kind"] == "positive", (
+            f"{path.relative_to(ROOT)} opens with a {scene['kind']} exemplar ({scene_id})")
+        assert _normalized(body) == _normalized(scene["answer"]), (
+            f"{path.relative_to(ROOT)} and the witness copy of {scene_id!r} have drifted; "
+            "one of the two was edited alone and they are no longer one exemplar")
+
+
+def test_no_other_document_carries_an_exemplar_block():
+    """The English-only carve-out `tests/test_doc_language.py` gives an
+    exemplar fence is safe only while the surface references are the only
+    files that have one. Otherwise the fence is a way to put unchecked,
+    untranslated prose anywhere in the tree."""
+    corpus = _corpus()
+    owned = {REFERENCES / REFERENCE_IN_SURFACE.search(description).group("name")
+             for description in corpus["surfaces"].values()}
+    # Dot directories are skipped rather than scanned: a maintainer's own
+    # `.claude/worktrees/` holds whole checkouts of this repository, and every
+    # reference file in one of them would read as a stray copy of itself.
+    candidates = [(path, path.relative_to(ROOT)) for path in sorted(ROOT.rglob("*.md"))]
+    stray = [str(rel) for path, rel in candidates
+             if not any(part.startswith(".") for part in rel.parts)
+             and path not in owned
+             and "```exemplar " in path.read_text(encoding="utf-8")]
+    assert not stray, "exemplar fence outside a surface reference: " + ", ".join(stray)
+
+
+def test_exemplar_drift_is_caught():
+    """Mutation proof for the gate above, in both directions it can go blind:
+    a one-character edit to either copy must redden, and a fence that loses
+    its `exemplar` tag must stop being read as one rather than pass."""
+    scene = next(item for item in _corpus()["scenes"]
+                 if item["id"] == "freeform_positions_view")
+    block = f"```exemplar {scene['id']}\n{scene['answer']}\n```"
+    assert _exemplars(block) == [(scene["id"], scene["answer"])], \
+        "the extractor does not read a well-formed block"
+    edited = block.replace("六檔", "五檔", 1)
+    assert _normalized(_exemplars(edited)[0][1]) != _normalized(scene["answer"]), \
+        "a one-character edit to the reference copy left the gate green"
+    assert _exemplars(f"```text\n{scene['answer']}\n```") == [], \
+        "an untagged fence is being read as an exemplar"
+
+
 # ───────────── 4. the obligation floor stays a list, not a table ─────────────
 
 def _dense_challenge():
@@ -433,6 +540,9 @@ def main():
         test_the_contract_routes_voice_rather_than_restating_it,
         test_the_witness_oracle_passes,
         test_the_checker_derives_its_blacklist_from_the_schemas,
+        test_every_surface_reference_opens_with_its_canonical_exemplar,
+        test_no_other_document_carries_an_exemplar_block,
+        test_exemplar_drift_is_caught,
         test_fixed_topics_stay_within_their_declared_ceiling,
         test_no_owed_fact_is_a_duplicate_another_could_absorb,
         test_the_owed_floor_stayed_smaller_than_the_whole_inventory,

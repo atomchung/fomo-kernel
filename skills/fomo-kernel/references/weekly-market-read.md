@@ -1,5 +1,21 @@
 # Weekly Market Read prototype
 
+## The exemplar
+
+One whole weekly brief. The connection between the frozen reading and a
+diagnosed holding leads, the bound on what that alert claims follows it, and
+the next-week check closes. Read it before writing one.
+
+It is copied verbatim from `tests/agent/expression-witnesses.json`, scene
+`weekly_read_connection` — the corpus that
+[expression-contract.md](../../../docs/expression-contract.md) §3.5 makes the
+binding statement of this shape. Every issuer in it is invented, and
+`tests/test_expression_contract.py` fails if the two copies disagree.
+
+```exemplar weekly_read_connection
+Volatility rose through the week while your heaviest name was already flagged as too large. Both readings are frozen with the review rather than refreshed today, and valuation was not checked, so this is a concentration alert rather than a claim that the holding is expensive. Watch whether the name's weight and the volatility reading remain elevated next week.
+```
+
 The #683 prototype is a read-only companion to a prepared `weekly_review`.
 Run its first read only after the complete, current private-card preview and
 before the existing rule choice:
