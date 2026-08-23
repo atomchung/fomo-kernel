@@ -543,7 +543,7 @@ A rejected case is refused before it is stored or shown: the caller gets the val
 
 ## Recording what the user did
 
-Persistent calls are recorded in a local, append-only log. Candidate fan-out uses `--ephemeral`, which computes against the existing recorded book and writes no evaluation; rerun only the selected or live candidate without the flag.
+Persistent calls are recorded in a local, append-only log. Candidate fan-out uses `--ephemeral`, which computes against the existing recorded book and writes no evaluation. A persistent rerun without the flag needs the user's explicit selection; a standing recommendation is not one.
 
 **When a persistent call happens, say once that the record is a consideration and not an execution.** This is one of the answer's keeps, and it is owed exactly when a canonical write occurred — never on an `--ephemeral` fan-out, which recorded nothing to be confused about. The user cannot see the difference between "stored what you were weighing" and "placed the order" from where they sit, and the difference is real money.
 

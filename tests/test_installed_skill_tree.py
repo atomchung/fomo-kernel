@@ -55,7 +55,7 @@ BOUNDARIES = [
                 "every portfolio-derived number, the portfolio basis, every "
                 "identity, every `rule_effect`, and every state transition "
                 "is the engine's",
-                "never recompute",
+                "never recompute, adjust, or fill its gaps",
             ],
         },
     },
@@ -158,6 +158,27 @@ def load_boundary_sources(tree):
     return sources
 
 
+def collapsed(text):
+    """One-space form of ``text``, for phrase matching and mutation alike.
+
+    A cosmetic hard-wrap re-flow of a pinned sentence must never read as a
+    lost boundary, and a mutation must redden for the rule it removed, not
+    for the line breaks around it -- the same reason `test_doc_language.py`
+    matches its floor phrases collapsed.
+    """
+    return " ".join(text.split())
+
+
+def phrase_present(sources, rel, phrase):
+    """Whether ``phrase`` appears in ``sources[rel]``, whitespace-collapsed.
+
+    The one membership definition every checker and mutation arm in this
+    module shares -- two inline copies of this check drifting apart would let
+    the live gate and its mutation proof disagree on what "present" means.
+    """
+    return collapsed(phrase) in collapsed(sources.get(rel, ""))
+
+
 def boundary_violations(sources):
     """``(label, file, phrase)`` for every phrase missing from ``sources``.
 
@@ -167,9 +188,8 @@ def boundary_violations(sources):
     violations = []
     for boundary in BOUNDARIES:
         for rel, phrases in boundary["files"].items():
-            text = sources.get(rel, "")
             for phrase in phrases:
-                if phrase not in text:
+                if not phrase_present(sources, rel, phrase):
                     violations.append((boundary["label"], rel, phrase))
     return violations
 
@@ -182,7 +202,7 @@ def reachability_violations(sources):
     `SKILL.md` is the sole file that host loads unprompted.
     """
     problems = []
-    if f"`{ROUTED_BOUNDARY_FILE}`" not in sources.get("SKILL.md", ""):
+    if not phrase_present(sources, "SKILL.md", f"`{ROUTED_BOUNDARY_FILE}`"):
         problems.append(
             f"SKILL.md does not name `{ROUTED_BOUNDARY_FILE}` -- the "
             "boundaries that file carries are text nothing loads")
@@ -191,19 +211,28 @@ def reachability_violations(sources):
     return problems
 
 
-def iter_markdown_and_json_sources(tree):
-    """``(relative_path, text)`` for every ``.md``/``.json`` file under ``tree``.
+# Every file type an installed reader can be routed to as instructions,
+# contract, or template. ``.py`` is excluded deliberately, wherever it sits:
+# boundary 1 keeps an installed agent out of engine internals, so an
+# `AGENTS.md` mention in a code comment is maintainer-facing rationale, never
+# an instruction an installed reader follows. The maintainer guide's
+# mirrored-surfaces row states the same scope.
+TEXT_RUNTIME_SUFFIXES = (".md", ".json", ".html", ".txt")
 
-    ``.py`` files under `engine/` and `tools/` are outside this walk
-    deliberately, and the maintainer guide's mirrored-surfaces row states the
-    same scope: boundary 1 keeps an installed agent out of engine internals,
-    so an `AGENTS.md` mention in a code comment there is maintainer-facing
-    rationale, never an instruction an installed reader follows.
+
+def iter_text_runtime_sources(tree):
+    """``(relative_path, text)`` for every text runtime surface under ``tree``.
+
+    Scope is ``TEXT_RUNTIME_SUFFIXES`` -- the card templates and
+    `requirements.txt` are runtime surfaces too, not only the markdown.
+    Paths are keyed in POSIX form so assertions match on every OS, and text
+    is read strictly: an undecodable byte in a runtime surface is its own
+    defect, not something to skip past silently.
     """
     for path in sorted(tree.rglob("*")):
-        if path.is_file() and path.suffix in (".md", ".json"):
-            yield str(path.relative_to(tree)), path.read_text(
-                encoding="utf-8", errors="ignore")
+        if path.is_file() and path.suffix in TEXT_RUNTIME_SUFFIXES:
+            yield path.relative_to(tree).as_posix(), path.read_text(
+                encoding="utf-8")
 
 
 def citation_violations(sources):
@@ -254,7 +283,7 @@ def test_no_file_under_the_installed_tree_cites_agents_md():
     """An installed reader has no `AGENTS.md` -- a citation pointing at it
     from inside `skills/fomo-kernel/` is dead on arrival for that reader.
     """
-    violations = citation_violations(iter_markdown_and_json_sources(SKILL_TREE))
+    violations = citation_violations(iter_text_runtime_sources(SKILL_TREE))
     assert not violations, (
         "skills/fomo-kernel/ cites AGENTS.md, which an installed host cannot "
         "read:\n  " + "\n  ".join(violations)
@@ -279,17 +308,21 @@ def test_boundary_and_citation_checks_are_mutation_proof():
     for boundary in BOUNDARIES:
         for rel, phrases in boundary["files"].items():
             for phrase in phrases:
-                assert sources_has_phrase(real_sources, rel, phrase), (
+                assert phrase_present(real_sources, rel, phrase), (
                     f"fixture assumption broken: {phrase!r} not found "
-                    f"verbatim in {rel}")
+                    f"in {rel}")
+                # Mutate the collapsed form, the same form the checker
+                # matches on -- removing the raw phrase would miss a pin
+                # that the file wraps across lines.
                 mutated = dict(real_sources)
-                mutated[rel] = real_sources[rel].replace(phrase, "", 1)
+                mutated[rel] = collapsed(real_sources[rel]).replace(
+                    collapsed(phrase), "", 1)
                 violations = boundary_violations(mutated)
                 assert (boundary["label"], rel, phrase) in violations, (
                     f"removing {phrase!r} from {rel} did not redden "
                     f"boundary {boundary['label']!r}")
 
-    real_md_json = dict(iter_markdown_and_json_sources(SKILL_TREE))
+    real_md_json = dict(iter_text_runtime_sources(SKILL_TREE))
     # Two injection targets: the tree's top level, and a file down inside
     # `references/` -- the second pins that the walk actually descends into
     # subdirectories, so narrowing `rglob` to a flat listing reddens here
@@ -315,7 +348,7 @@ def test_boundary_and_citation_checks_are_mutation_proof():
         "fixture assumption broken: the routed boundary file is already "
         "unreachable")
     unpointed = dict(real_sources)
-    unpointed["SKILL.md"] = real_sources["SKILL.md"].replace(
+    unpointed["SKILL.md"] = collapsed(real_sources["SKILL.md"]).replace(
         f"`{ROUTED_BOUNDARY_FILE}`", "", 1)
     assert reachability_violations(unpointed), (
         "deleting SKILL.md's pointer to the routed boundary file would "
@@ -329,10 +362,6 @@ def test_boundary_and_citation_checks_are_mutation_proof():
         empty_tree = Path(tmp)
         assert boundary_violations(load_boundary_sources(empty_tree)), (
             "a tree with no SKILL.md at all would stay green")
-
-
-def sources_has_phrase(sources, rel, phrase):
-    return phrase in sources.get(rel, "")
 
 
 _REGISTERED_TESTS = []  # populated by main(); see the registration self-check

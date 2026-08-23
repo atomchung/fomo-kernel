@@ -1365,14 +1365,16 @@ def always_loaded_runtime_violations(root):
         (root / "skills" / "fomo-kernel" / "SKILL.md", INSTALLED_CONTRACT_BUDGET_BYTES),
         (root / "AGENTS.md", CHECKOUT_FLOOR_BUDGET_BYTES),
     ]
-    missing = [str(path.relative_to(root)) for path, _ in budgets if not path.is_file()]
+    missing = [path.relative_to(root).as_posix() for path, _ in budgets if not path.is_file()]
     if missing:
         return [f"always-loaded runtime surface is missing: {', '.join(missing)}"]
     problems = []
     for path, budget in budgets:
         size = path.stat().st_size
         if size > budget:
-            rel = path.relative_to(root)
+            # POSIX form, so the mutation test's file-naming assertions hold
+            # on every OS rather than only where the native separator is "/".
+            rel = path.relative_to(root).as_posix()
             problems.append(
                 f"{rel} is {size} bytes, over its own {budget}-byte budget. "
                 "Route the new material to the document that owns its task "

@@ -24,7 +24,9 @@ ROUTE_FILES = {
     "consider": CONSEQUENCE,
     "freeform answers": FREEFORM,
 }
-BOOK_BEARING = ("consider", "freeform answers")
+# Derived, not hand-listed: ROUTE_FILES is the authoritative enumeration, and
+# a route added or renamed there must not leave a second collection stale.
+BOOK_BEARING = tuple(s for s in ROUTE_FILES if s != "no recorded book")
 CATALOGUE_LINK = "[research-priors.md](research-priors.md)"
 
 # #716 section 4, the boundary that makes the book-bearing routes safe. It is
@@ -120,7 +122,7 @@ def test_a_the_catalogue_has_only_the_audited_priors_and_the_required_fields():
             assert field in section, f"{prior} is missing {field}"
 
 
-def test_b_the_catalogue_is_reachable_from_every_book_bearing_route():
+def test_b_the_catalogue_is_reachable_from_every_route():
     """#716's defect, stated as the thing that must now be true. The shipped
     implementation (#727) wired the no-book route only, and the issue's own
     title is *cross-route*: a user who hands over a book must not lose the
