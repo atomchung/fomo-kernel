@@ -51,9 +51,9 @@ Label judgment — thesis, valuation, timing, forecast, recommendation, ranking,
 filters, as-of point, material exclusions, and coverage limits; never imply
 exhaustive coverage. Stop by marginal decision value, cost, and latency. When
 book consequence matters, run each candidate with `consider --ephemeral`, rank
-from those results plus sourced research, then rerun only the user-selected or
-still-live candidate without the flag. Rejected candidates leave no canonical
-evaluation row.
+from those results plus sourced research. A persistent rerun without the flag
+needs the user's explicit selection; a standing recommendation is not one.
+Exploration leaves no canonical evaluation row.
 
 ## What the response may ask you for
 
