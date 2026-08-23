@@ -11,8 +11,9 @@ Use relevant evidence and the recorded book when portfolio consequences matter; 
 
 Use `consider` when the user supplies a trade premise and asks what it does to a recorded book. It is the deterministic portfolio-consequence path, never a prerequisite for research, discovery, or a non-portfolio recommendation.
 
+Commands run from this skill's own directory.
+
 ```bash
-cd skills/fomo-kernel
 python3 engine/review.py consider --premise '{"ticker":"NVDA","side":"buy","qty":20}' --language <tag>
 ```
 
@@ -20,7 +21,7 @@ A premise needs a `ticker`, a `side`, and one of `qty` or `notional`. Everything
 
 Pass `--language` as the tag the user is writing in; an unsupported tag falls back to `en`. Keep conversing in their language and never hand-translate engine copy.
 
-First run only: `pip install -r requirements.txt`, then `python3 engine/review.py doctor`. The engine fail-soft degrades without its optional dependencies — silently dropping current prices and market context — so verify once rather than mid-answer.
+First run only: `python3 engine/review.py doctor`. The engine fail-soft degrades without its optional dependencies — silently dropping current prices and market context — so verify once rather than mid-answer.
 
 ## The response is the contract
 

@@ -4,8 +4,9 @@ These synthetic long-only BUY/SELL CSV files exercise stable behavioral branches
 
 ## Run a fixture
 
+Run these from this directory's parent — the skill root.
+
 ```bash
-cd skills/fomo-kernel
 TR_DRIVER_MAP=mock/sample_fundamental.driver_map.json python3 engine/trade_recap.py mock/sample_fundamental.csv
 TR_DRIVER_MAP=mock/sample_momentum.driver_map.json python3 engine/trade_recap.py mock/sample_momentum.csv
 TR_DRIVER_MAP=mock/sample_value.driver_map.json python3 engine/trade_recap.py mock/sample_value.csv
