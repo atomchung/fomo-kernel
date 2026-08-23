@@ -9,7 +9,7 @@ valuation gap as one end block. Read it before writing one.
 
 It is copied verbatim from `tests/agent/expression-witnesses.json`, scene
 `consider_three_way_comparison` — the corpus that
-[expression-contract.md](../../../docs/expression-contract.md) §3.5 makes the
+the repository's expression contract (`docs/expression-contract.md`) §3.5 makes the
 binding statement of this shape. Every issuer in it is invented, and
 `tests/test_expression_contract.py` fails if the two copies disagree.
 
@@ -376,9 +376,9 @@ Under maintainer QA, delivery of these obligations is proven rather than assumed
 
 ## Route-specific synthesis
 
-Apply the global [expression contract](../../../docs/expression-contract.md):
-the answer's shape through its §3 mother chapter, voice through the
-[output-voice contract](../../../docs/output-voice.md) (V1–V9), disclosure
+Apply the repository's global expression contract (`docs/expression-contract.md`):
+the answer's shape through its §3 mother chapter, voice through its
+output-voice contract (`docs/output-voice.md`, V1–V9), disclosure
 relevance and placement through D1–D7, provenance labelling through C1–C4.
 Those own how this answer speaks; this section owns only the `consider` route's
 salience facts and answer slots.
@@ -389,7 +389,7 @@ decision-relevant facts without turning available ones into standing copy.
 <a id="answer-shape"></a>
 ### Derivation from the pyramid
 
-The answer's shape is [expression contract §3](../../../docs/expression-contract.md)'s
+The answer's shape is expression contract §3's
 — one sentence on top, an increment-gated middle, the rest of the inventory
 behind a single offer, one caliber block at the end — and this file states it
 nowhere else (#832; before that, the reader's-question-chain paragraph here was

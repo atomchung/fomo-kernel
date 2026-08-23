@@ -1,7 +1,7 @@
 # Card policy
 
 > Section order and section set are governed by
-> [docs/output-contract.md](../../../docs/output-contract.md) (keynote + four
+> the repository's `docs/output-contract.md` (keynote + four
 > blocks), which also owns every rule about which figures render as tiles
 > versus prose. This file keeps only what the agent decides: wording,
 > redaction, and narrative.
