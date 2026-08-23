@@ -167,6 +167,13 @@ SUITES = [
     # green suites over it on every run.
     ("Repository hygiene (#575)", "tests/test_repo_hygiene.py", "product"),
     ("Documentation and agent workflow boundaries", "tests/test_doc_language.py", "product"),
+    # #838: README.md installs the product by symlinking skills/fomo-kernel/
+    # alone, so an installed host never receives AGENTS.md. Every suite above
+    # reads a full checkout and could not tell a root-only rule from an
+    # installed one; this suite reads only skills/fomo-kernel/ and fails when
+    # one of the six non-negotiable boundaries stops being readable from
+    # inside it.
+    ("Installed skill tree carries the six boundaries (#838)", "tests/test_installed_skill_tree.py", "product"),
     ("Cross-route research baseline (#716)", "tests/test_research_priors.py", "product"),
     ("Copy ratchet (#368 Phase 1)", "tests/test_copy_ratchet.py", "product"),
     # #402 knife 5: the copy branches no persona reaches, rendered on all three

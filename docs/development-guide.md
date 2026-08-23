@@ -271,8 +271,13 @@ names what actually holds it; where nothing does, the row says so.
   (#543) is a second instance, weaker in kind: it checks a shared literal
   phrase rather than a list derived from source, because there is no engine
   artifact to derive a freeform-answer-shape rule from. Two rules are now
-  wired this way; a third must-always-land rule forgotten in one entry point
-  is still caught by nothing.
+  wired this way. #838 added a gate of a different kind for the same failure:
+  `README.md` installs the product by symlinking `skills/fomo-kernel/` alone,
+  so an installed host never receives `AGENTS.md` or anything else at the
+  repository root — `tests/test_installed_skill_tree.py` reads only that
+  directory and fails when any of the six non-negotiable boundaries stops
+  being readable from inside it. A new must-always-land rule forgotten in
+  one entry point is still caught by nothing.
 - Do not trust pattern counts of prohibitions ("N occurrences of *never*").
   Most hits describe engine behavior the agent relies on to do *less* work;
   deleting them creates work. Read and classify before concluding.

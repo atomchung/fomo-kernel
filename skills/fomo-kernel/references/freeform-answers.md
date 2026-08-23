@@ -122,9 +122,10 @@ not a new rendering: it is the same engine-rendered artifact
 rather than a freshly composed one. The card's own P&L sparkline stays
 exactly as scoped before — part of the card's own rendering, not a
 detachable chart reachable on its own — and privacy still defaults to
-`card-private.*` per AGENTS.md invariant 4 / AGENTS.md invariant 4: asking for the
-card in freeform conversation does not loosen that default, and only
-`card-public.md` is share-safe, on request.
+`card-private.*` — the card never reaches a third party or cloud memory
+(SKILL.md, "Private data stays local"): asking for the card in freeform
+conversation does not loosen that default, and only `card-public.md` is
+share-safe, on request.
 
 **Positions view.** Trigger: the user asks, in freeform conversation, to see
 their current holdings or positions. Shape, revised by owner ruling
@@ -145,8 +146,8 @@ rather than a rule this entry restates.
 
 Every field in the Positions view must come from an engine-computed
 current-book snapshot obtained through `engine/review.py` — the same
-numbers-from-engine and CLI-only boundary (SKILL.md rules 1 and 2; AGENTS.md
-invariants 2 and 1) every other number in this product already obeys, never
+numbers-from-engine and CLI-only boundary (SKILL.md and
+`references/agent-boundaries.md`) every other number in this product already obeys, never
 a value the agent recomputes from a CSV, and never one read by importing an
 engine module directly. The dedicated read-only outlet is
 `engine/review.py positions` (#561): no CSV, no premise, no supplied
