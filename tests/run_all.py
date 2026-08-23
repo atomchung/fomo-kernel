@@ -167,7 +167,7 @@ SUITES = [
     # green suites over it on every run.
     ("Repository hygiene (#575)", "tests/test_repo_hygiene.py", "product"),
     ("Documentation and agent workflow boundaries", "tests/test_doc_language.py", "product"),
-    ("Research-aware no-book framing", "tests/test_research_priors.py", "product"),
+    ("Cross-route research baseline (#716)", "tests/test_research_priors.py", "product"),
     ("Copy ratchet (#368 Phase 1)", "tests/test_copy_ratchet.py", "product"),
     # #402 knife 5: the copy branches no persona reaches, rendered on all three
     # delivery surfaces and compared against a generated golden. Unlike the

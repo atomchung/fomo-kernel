@@ -415,12 +415,24 @@ and references this file. None of them may restate, narrow, or contradict the
 pyramid or V/D/C. "Derivation" is what that surface **adds** to §3; an empty
 derivation is valid and is the default.
 
+**A shared claim authority is not a derivation.** Three of the conversational
+surfaces read `references/research-priors.md` for the same research baseline
+(#716), and it adds a shape parameter to none of them: it says what a block may
+be *backed by*, never which floor a block sits on or that a block must exist.
+The derivation column below is unchanged by that ruling; the file appears in the
+last column, where a surface's other keeps live. Its own "An engine fact
+dominates a prior" section is the single statement of how far a prior may travel
+beside a computed number; the two book-bearing routes carry that sentence
+**verbatim** rather than a paraphrase of it, and `tests/test_research_priors.py`
+fails on drift — the same mechanism #834 used to put one exemplar on each
+surface's generation path.
+
 | Surface | Layout authority | Derivation it adds to §3 | Everything else it keeps |
 |---|---|---|---|
 | Review card | [output-contract.md](output-contract.md) | The **document incarnation**: keynote + four fixed blocks, in that order, on every committed card. | Module prerequisites, which block the footnote ends. |
-| `consider` | `references/trade-consequence.md` | Lead-selection salience order; the answer slots the middle floor may hold; `rule_effects` is never traded away. | What the payload means, the obligation floor. |
-| Freeform answers | `references/freeform-answers.md` | None on shape — text-first is a latency default, not a shape. | Proportionate production, reusable engine-backed views. |
-| No recorded book | `references/decision-framing.md` | The top sentence is a research-backed baseline when no book exists; the strategy-class map is a middle-floor block set. | Claim boundaries, question heuristics, the invitation set. |
+| `consider` | `references/trade-consequence.md` | Lead-selection salience order; the answer slots the middle floor may hold; `rule_effects` is never traded away. | What the payload means, the obligation floor, the research baseline a computed number may be interpreted with. |
+| Freeform answers | `references/freeform-answers.md` | None on shape — text-first is a latency default, not a shape. | Proportionate production, reusable engine-backed views, the same research baseline when the question is a decision. |
+| No recorded book | `references/decision-framing.md` | The top sentence is a research-backed baseline when no book exists; the strategy-class map is a middle-floor block set. | Claim boundaries, question heuristics, the invitation set; the baseline catalogue it shares with the two routes above. |
 | Weekly market read | `references/weekly-market-read.md` | Its one optional question comes after the complete brief, never before it. | What the prototype reads, and what it may not invoke. |
 
 ## 7. Enforcement

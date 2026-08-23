@@ -1,14 +1,76 @@
-# Research priors for bounded no-book framing
+# Research priors — the decision baseline, on every route
 
-This is the small, host-side research authority used by the no-recorded-book
-route. It is not portfolio arithmetic, a suitability assessment, or a product
-selector. It supplies only a scoped baseline that remains available before the
-user has a book; the route still does not choose a fund, geography, allocation,
-trade, or final action.
+This is the small, host-side research authority behind a normative baseline
+this product may state directly. It is not portfolio arithmetic, a suitability
+assessment, or a product selector: no route reading it chooses a fund,
+geography, allocation, trade, or final action.
 
 Recheck the primary sources before widening a claim or applying it to a new
 decision class. These priors are stable research syntheses, not runtime web
-lookups, engine facts, or user rules.
+lookups, engine facts, or user rules. Cite one the way any looked-up fact is
+cited — the claim and where it comes from — and never as something computed
+from the user's own record.
+
+## One catalogue, every route
+
+The catalogue was reachable only from the route that has no book, which made
+the product answer a user *worse* the more evidence they handed over: with
+nothing recorded they heard that broad diversification is the baseline and that
+an index label alone does not establish breadth, and once they supplied a book
+they got weights and concentration and could no longer reach that baseline at
+all. Owner ruling
+([#716](https://github.com/atomchung/fomo-kernel/issues/716)): the same
+catalogue is the baseline on every route that answers a decision.
+
+| Route | Where the baseline enters |
+|---|---|
+| No recorded book ([decision-framing.md](decision-framing.md)) | The answer's top sentence, ahead of the strategy-class map. |
+| `consider` ([trade-consequence.md](trade-consequence.md)) | A middle-floor block, interpreting a fact the engine computed. |
+| Freeform answers ([freeform-answers.md](freeform-answers.md)) | The same, whenever the question asked is a decision rather than a lookup. |
+
+Only the *entry point* differs. The claims, their applicable decision classes,
+their material exceptions and their forbidden overclaims are identical on all
+three, and a route may not hold a narrower or a wider version of a prior than
+this file states.
+
+A prior is a claim authority, not a block, a question, or a standing paragraph:
+it adds no shape parameter to any surface, so the increment gate in
+[expression-contract.md](../../../docs/expression-contract.md) §3 governs it
+like every other block. One that changes nothing about what the user should do
+is deleted, not shortened.
+
+## An engine fact dominates a prior
+
+**A prior may interpret a deterministic result. It may never replace one,
+substitute for one, or fill a gap in one.** Where the engine computed a number,
+that number is the fact and the prior is at most the reading of it. Where the
+engine computed nothing, the prior does not get to supply the missing number in
+words.
+
+Three consequences, in the order they get broken:
+
+1. **A prior invents no threshold.** It may not name a position cap, an
+   allocation, a concentration limit, or an exposure ceiling that this user has
+   no rule for and the engine did not compute. A cap is a fact measured against
+   a computed weight and overridable by the user's own `set-cap`; offered as a
+   general rule it is fortune telling about a book nobody read.
+2. **A prior interprets, then points.** It may say broad diversification is the
+   baseline and then point at the concentration the engine computed for this
+   book. It may not run that inference backwards and describe the book from the
+   baseline.
+3. **A prior judges no particular act without the record.** It may say low
+   discretionary turnover is generally supported for a standing long-horizon
+   policy; it may not call this user's sale excessive without the transaction
+   record or a rule they stated themselves.
+
+The dominance is one-directional. An engine fact, a user rule, or a stated
+personal fact narrows or disqualifies a prior's **applicability**; a prior never
+edits, softens, excuses, or outranks an engine fact. When the two look like they
+disagree, the engine fact is the answer and the prior was inapplicable — that is
+the whole of the conflict rule. The two book-bearing routes quote the bold
+sentence above **verbatim** rather than wording it themselves, and
+`tests/test_research_priors.py` fails if the copies drift apart; no surface
+writes a version of its own.
 
 ## RP-001 — broad diversification baseline
 

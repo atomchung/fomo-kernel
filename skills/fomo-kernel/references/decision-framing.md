@@ -89,6 +89,11 @@ applicable decision class fits the user's own description; state any material
 exception beside that baseline. A prior may support a strategy recommendation,
 but never invents a fund choice, allocation, suitability finding, or forecast.
 
+That catalogue is not this route's private property (#716). The book-bearing
+routes read the same priors, and what is special here is only *where* the
+baseline lands: with no computed consequence to lead with, it is the top
+sentence rather than a middle-floor block.
+
 For genuinely long-horizon risk capital with no supplied concentration edge,
 the available baseline is broad diversification and lower discretionary
 turnover. State the important limitation with it: a long label does not make
@@ -232,7 +237,7 @@ Not "provide your portfolio for a more accurate analysis".
   rule collisions were not computed. State a target or forecast only when it
   is decision-relevant, with assumptions and uncertainty; an analyst target
   never becomes an engine fact or certainty merely because it was found.
-- **A missing number is never replaced by a general rule.** A single-position cap is a fact measured against a computed weight and overridable by the user's own `set-cap`. Stated as this user's remaining capacity with no book, the identical sentence becomes fortune telling — the user may already be far past it, and nothing here knows that. A staged-entry, size, or leverage heuristic may still be recommended as labelled judgment; it must not impersonate a computed fact about this book.
+- **A missing number is never replaced by a general rule.** A single-position cap is a fact measured against a computed weight and overridable by the user's own `set-cap`. Stated as this user's remaining capacity with no book, the identical sentence becomes fortune telling — the user may already be far past it, and nothing here knows that. A staged-entry, size, or leverage heuristic may still be recommended as labelled judgment; it must not impersonate a computed fact about this book. The cross-route form of the same rule — an engine fact dominates a prior — is stated once in [research-priors.md](research-priors.md) and governs the routes that *do* have a computed weight to point at.
 - **"So should I buy it?"** gets the best bounded answer available: recommend, delay, or decline based on the stated premise and evidence, then name the portfolio fact most likely to reverse that judgment. Do not hide behind “the decision is yours,” and do not manufacture portfolio precision.
 - **Brevity is not a licence to drop a fact.** Text-first is a default, never a
   limit on which claims the answer owes.
