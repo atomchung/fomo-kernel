@@ -122,9 +122,10 @@ not a new rendering: it is the same engine-rendered artifact
 rather than a freshly composed one. The card's own P&L sparkline stays
 exactly as scoped before — part of the card's own rendering, not a
 detachable chart reachable on its own — and privacy still defaults to
-`card-private.*` per AGENTS.md invariant 4 / AGENTS.md invariant 4: asking for the
-card in freeform conversation does not loosen that default, and only
-`card-public.md` is share-safe, on request.
+`card-private.*` — the card never reaches a third party or cloud memory
+(SKILL.md, "Private data stays local"): asking for the card in freeform
+conversation does not loosen that default, and only `card-public.md` is
+share-safe, on request.
 
 **Positions view.** Trigger: the user asks, in freeform conversation, to see
 their current holdings or positions. Shape, revised by owner ruling
@@ -145,8 +146,8 @@ rather than a rule this entry restates.
 
 Every field in the Positions view must come from an engine-computed
 current-book snapshot obtained through `engine/review.py` — the same
-numbers-from-engine and CLI-only boundary (SKILL.md rules 1 and 2; AGENTS.md
-invariants 2 and 1) every other number in this product already obeys, never
+numbers-from-engine and CLI-only boundary (SKILL.md and
+`references/agent-boundaries.md`) every other number in this product already obeys, never
 a value the agent recomputes from a CSV, and never one read by importing an
 engine module directly. The dedicated read-only outlet is
 `engine/review.py positions` (#561): no CSV, no premise, no supplied
@@ -246,3 +247,27 @@ something. Every *other* ad hoc question in this file's opening paragraph —
 obligation list of its own, and #823 did not build one. Those answers inherit
 the placement rules above and select their own disclosures from what the engine
 response they read actually carried.
+
+## The research baseline is available here too
+
+Owner ruling ([#716](https://github.com/atomchung/fomo-kernel/issues/716)). A
+freeform question is often a decision wearing a lookup's clothes — whether to
+keep holding, whether to add, what to do with cash sitting in the account. When
+it is, the baseline in [research-priors.md](research-priors.md) is available on
+this route exactly as it is on the one with no recorded book. Having the book is
+not a reason to lose it: an answer that reads the engine's computed weights and
+drops the baseline the same user would have been given with no book at all is
+the defect that ruling names, where more evidence bought a narrower answer.
+
+The boundary lives once, in that file's own **"An engine fact dominates a
+prior"**, and this route quotes it rather than paraphrasing it: **A prior may
+interpret a deterministic result. It may never replace one, substitute for one,
+or fill a gap in one.** It therefore supplies no cap, no allocation, and no
+threshold the user has no rule for and the engine did not compute.
+
+**This adds no shape parameter, and Rule 4's empty derivation stands.** A claim
+authority says what a block may be backed by; it does not say which floor a
+block sits on or create one. A prior that does not change the recommendation is
+not said, the same as any other block that fails the increment gate — and a
+lookup that really was a lookup stays the quick, direct answer Rule 1 defaults
+to.

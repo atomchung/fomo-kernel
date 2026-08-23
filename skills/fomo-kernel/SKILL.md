@@ -5,14 +5,15 @@ description: Help with investment decisions and explicit candidate searches — 
 
 # fomo-kernel
 
-Use relevant evidence and the recorded book when portfolio consequences matter; then recommend what to do. Missing inputs narrow claims, not Skill engagement. `AGENTS.md` holds throughout.
+Use relevant evidence and the recorded book when portfolio consequences matter; then recommend what to do. Missing inputs narrow claims, not Skill engagement. `references/agent-boundaries.md` holds throughout.
 
 ## Answer a live decision
 
 Use `consider` when the user supplies a trade premise and asks what it does to a recorded book. It is the deterministic portfolio-consequence path, never a prerequisite for research, discovery, or a non-portfolio recommendation.
 
+Commands run from this skill's own directory. Product state is reached only through the `engine/review.py` CLI — never another `engine/*` script, never a direct engine import.
+
 ```bash
-cd skills/fomo-kernel
 python3 engine/review.py consider --premise '{"ticker":"NVDA","side":"buy","qty":20}' --language <tag>
 ```
 
@@ -20,7 +21,7 @@ A premise needs a `ticker`, a `side`, and one of `qty` or `notional`. Everything
 
 Pass `--language` as the tag the user is writing in; an unsupported tag falls back to `en`. Keep conversing in their language and never hand-translate engine copy.
 
-First run only: `pip install -r requirements.txt`, then `python3 engine/review.py doctor`. The engine fail-soft degrades without its optional dependencies — silently dropping current prices and market context — so verify once rather than mid-answer.
+First run only: `python3 engine/review.py doctor`. The engine fail-soft degrades without its optional dependencies — silently dropping current prices and market context — so verify once rather than mid-answer.
 
 ## The response is the contract
 
@@ -32,7 +33,7 @@ The payload is the authority for portfolio facts. External research is optional 
 - `disclosures_display` — each disclosure as a sentence in the user's language. Use it as an end-block line rather than translating a key.
 - `prior_decision` — present only when the user already resolved one earlier consideration of this same ticker: their own stored words, and what they reported doing about it, never proof they did it. Use `prior_decision` only when it changes the current lead judgment, evidence requirement, process action, or a decision-changing question; otherwise ignore it.
 
-Read portfolio consequence from that payload; never recompute or fill its gaps. An absent portfolio-derived number stays out. Public numbers need source and as-of, and neither they nor a forecast substitutes for portfolio fact.
+Read portfolio consequence from that payload — every portfolio-derived number, the portfolio basis, every identity, every `rule_effect`, and every state transition is the engine's; never recompute, adjust, or fill its gaps. An absent portfolio-derived number stays out. Public numbers need source and as-of, and neither they nor a forecast substitutes for portfolio fact.
 
 ## Research only what could change the recommendation
 
@@ -50,9 +51,9 @@ Label judgment — thesis, valuation, timing, forecast, recommendation, ranking,
 filters, as-of point, material exclusions, and coverage limits; never imply
 exhaustive coverage. Stop by marginal decision value, cost, and latency. When
 book consequence matters, run each candidate with `consider --ephemeral`, rank
-from those results plus sourced research, then rerun only the user-selected or
-still-live candidate without the flag. Rejected candidates leave no canonical
-evaluation row.
+from those results plus sourced research. A persistent rerun without the flag
+needs the user's explicit selection; a standing recommendation is not one.
+Exploration leaves no canonical evaluation row.
 
 ## What the response may ask you for
 
@@ -69,7 +70,11 @@ Persistent `consider` records the evaluation; `consider --ephemeral` does not. S
 python3 engine/review.py consider --resolve <evaluation_id> --decision acted|declined|modified
 ```
 
-`acted` is the user's report, not proof. Only a later transaction import proves a trade happened. Never write, imply, or carry forward an execution the user has not reported or the ledger does not show.
+`acted` is the user's report, not proof. Four states stay distinct — considered, user-resolved, user-reported execution, transaction-proven execution — and none is promoted to the next: only a transaction record proves a trade happened. Never write, imply, or carry forward an execution the user has not reported or the ledger does not show.
+
+## Private data stays local
+
+Trades, holdings, amounts, motives, and cards never reach a third party or cloud memory. The review card is private to the user — local files, terminal output, and private-by-default in-client rendering are fine; publishing is not. Anything public — a shared card, an example, a bug report — carries synthetic data only.
 
 ## Other jobs
 

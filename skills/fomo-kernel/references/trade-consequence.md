@@ -480,6 +480,34 @@ Every claim you add carries its own label: state your record says (drawn straigh
 
 `consider` measures weight, concentration, driver overlap, cash, and rule collisions. Liquidity, valuation, tax consequences, and position fit are available unchecked dimensions, not mandatory boilerplate. Name the ones that bear on the recommendation or prevent a false impression of coverage.
 
+### The research baseline, and why it may not fill a gap
+
+A recorded book does not remove the research baseline; it outranks it. The
+catalogue in [research-priors.md](research-priors.md) is the same on this route
+as on the one with no book (#716), and a prior belongs in the answer when it
+changes what the user should do about the number the engine just computed — a
+proposed trade that lifts one driver further, a sale that reads as reactive
+against a standing long-horizon policy, a staging plan described as a return
+improvement. Losing it here is the defect that ruling names: the more evidence
+the user hands over, the narrower the answer gets.
+
+The boundary that makes this safe lives once, in that file's own **"An engine
+fact dominates a prior"**, and this route quotes it rather than paraphrasing it:
+**A prior may interpret a deterministic result. It may never replace one,
+substitute for one, or fill a gap in one.** So it invents no cap, no allocation,
+and no threshold this user has no rule for and the engine did not compute; it
+may point at the concentration `consequence` carries, and may not describe the
+book from the baseline instead. Read that section for the rest of it —
+`tests/test_research_priors.py` fails if these copies drift apart.
+
+It adds no answer slot and no lead. A prior enters the opening body or the
+falsifier like any other support, is labelled as the cited synthesis it is
+rather than as something the engine computed, and is deleted when the
+recommendation does not turn on it — a standing paragraph on the value of
+diversification is exactly the `default_as_insight` ban wearing a citation.
+
+### Structuring the case with `--agent-case`
+
 You may optionally structure this case with `--agent-case`, a path to a JSON file, checked by `engine/answer_provenance.py::validate_agent_case` (#414) before anything is stored or returned:
 
 ```json
@@ -515,7 +543,7 @@ A rejected case is refused before it is stored or shown: the caller gets the val
 
 ## Recording what the user did
 
-Persistent calls are recorded in a local, append-only log. Candidate fan-out uses `--ephemeral`, which computes against the existing recorded book and writes no evaluation; rerun only the selected or live candidate without the flag.
+Persistent calls are recorded in a local, append-only log. Candidate fan-out uses `--ephemeral`, which computes against the existing recorded book and writes no evaluation. A persistent rerun without the flag needs the user's explicit selection; a standing recommendation is not one.
 
 **When a persistent call happens, say once that the record is a consideration and not an execution.** This is one of the answer's keeps, and it is owed exactly when a canonical write occurred — never on an `--ephemeral` fan-out, which recorded nothing to be confused about. The user cannot see the difference between "stored what you were weighing" and "placed the order" from where they sit, and the difference is real money.
 

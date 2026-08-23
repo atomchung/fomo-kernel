@@ -289,12 +289,33 @@ SHARED_FLOOR_PHRASES = (
 # AGENTS.md on the root-to-cwd path plus the user's global file. Half of it is
 # this repository's share; the global file is not ours to measure.
 CODEX_INSTRUCTION_BUDGET_BYTES = 16 * 1024
-# #507: the same 16 KiB, applied to a different failure. Codex's cap is about
-# one client's discovery limit; this one is about what every host pays before
-# it can answer a live decision at all. The pair measured here was 30,431 bytes
-# on `main@4e7a15e` and instructed a further ~156 KB of routed prose; the slice
-# that shrank it left this behind so the loading chain cannot quietly grow back.
-ALWAYS_LOADED_RUNTIME_BUDGET_BYTES = 16 * 1024
+# #507 set one 16 KiB budget over the *pair* `AGENTS.md` + `SKILL.md` --
+# applied to a different failure than Codex's cap above: not one client's
+# discovery limit, but what every host pays before it can answer a live
+# decision at all. That pair measured 30,431 bytes on `main@4e7a15e` and
+# instructed a further ~156 KB of routed prose; the slice that shrank it left
+# the shared budget behind so the loading chain could not quietly grow back.
+#
+# #838's owner ruling split that one number in two: the pair budget bound two
+# independent scenarios together, and it sat at exactly 16,384 bytes -- zero
+# headroom -- when #838 needed to add boundary copy that had to ride inside
+# the installed contract. Changing either constant below needs an owner
+# ruling, not an edit.
+#
+# Scenario: an installed host. README.md installs the product by symlinking
+# `skills/fomo-kernel/` alone, so an installed host never receives
+# `AGENTS.md` -- `skills/fomo-kernel/SKILL.md` is that host's entire
+# always-loaded surface before it can answer a live decision.
+INSTALLED_CONTRACT_BUDGET_BYTES = 12 * 1024
+# Scenario: a repository checkout. `AGENTS.md` is the always-on floor every
+# client loads there -- Codex natively, Claude Code through the CLAUDE.md
+# import. SKILL.md is deliberately not in this budget: in a checkout it still
+# loads only when the skill fires, and it already has its own ceiling above.
+CHECKOUT_FLOOR_BUDGET_BYTES = 8 * 1024
+# The sum, 20 KiB, is the checkout host's decision-turn tax if both surfaces
+# load in the same turn: 4 KiB over #507's original 16 KiB, spent
+# deliberately on the boundary copy that must ride inside the installed
+# contract.
 # `CLAUDE.md` may still be *named* where a file legitimately describes the
 # adapter's role or the authority split. Everywhere else, naming it as the home
 # of a shared rule points a reader at a file that no longer holds it.
@@ -1319,34 +1340,45 @@ def floor_violations(text):
 
 
 def always_loaded_runtime_violations(root):
-    """Reasons the always-loaded runtime contract has grown back (#507).
+    """Reasons the always-loaded runtime contract has grown back (#507, #838).
 
-    `AGENTS.md` and `SKILL.md` are the two files a host reads before it can
-    answer anything; every other runtime document is soft-routed and reached
-    only when its task is actually invoked. #507 collapsed that pair from
-    30,431 bytes to a small contract, and the budget is what keeps the
-    collapse from being undone one useful paragraph at a time -- the failure
-    it prevents is the one that motivated the slice, a host arriving at a
-    live decision holding a procedure manual instead of the engine's answer.
+    `AGENTS.md` and `skills/fomo-kernel/SKILL.md` are the two files a host
+    reads before it can answer anything; every other runtime document is
+    soft-routed and reached only when its task is actually invoked. #507
+    collapsed that pair from 30,431 bytes to a small contract.
 
-    Deliberately a byte budget over the *pair*, not a line count over each:
-    the tax is what a host loads before its first word, and moving prose from
-    one file to the other does not reduce it.
+    #838 found the two files answer two independent scenarios that a single
+    pair budget had bound together -- an installed host (README.md symlinks
+    `skills/fomo-kernel/` alone, so SKILL.md is that host's *entire*
+    always-loaded surface) and a repository checkout (AGENTS.md is the
+    always-on floor every client loads there; SKILL.md is not counted in a
+    checkout because it loads only when the skill fires). Binding both to one
+    number meant growth in one file could eat the other's headroom -- the
+    pair sat at exactly 16,384 bytes, zero room to spare, when #838 needed to
+    add boundary copy that had to land inside the installed contract. Each
+    file is now checked against its own budget.
+
+    Takes the root as an argument, and keeps the missing-file arm, so the
+    mutation test can drive this exact logic against synthetic trees.
     """
-    surfaces = [root / "AGENTS.md", root / "skills" / "fomo-kernel" / "SKILL.md"]
-    problems = []
-    missing = [str(path.relative_to(root)) for path in surfaces if not path.is_file()]
+    budgets = [
+        (root / "skills" / "fomo-kernel" / "SKILL.md", INSTALLED_CONTRACT_BUDGET_BYTES),
+        (root / "AGENTS.md", CHECKOUT_FLOOR_BUDGET_BYTES),
+    ]
+    missing = [path.relative_to(root).as_posix() for path, _ in budgets if not path.is_file()]
     if missing:
         return [f"always-loaded runtime surface is missing: {', '.join(missing)}"]
-    sizes = {path.relative_to(root): path.stat().st_size for path in surfaces}
-    total = sum(sizes.values())
-    if total > ALWAYS_LOADED_RUNTIME_BUDGET_BYTES:
-        problems.append(
-            f"the always-loaded runtime contract is {total} bytes, over the "
-            f"{ALWAYS_LOADED_RUNTIME_BUDGET_BYTES}-byte budget #507 set: "
-            + ", ".join(f"{rel} {size}" for rel, size in sorted(sizes.items()))
-            + ". Route the new material to the document that owns its task "
-              "instead of adding it to the floor.")
+    problems = []
+    for path, budget in budgets:
+        size = path.stat().st_size
+        if size > budget:
+            # POSIX form, so the mutation test's file-naming assertions hold
+            # on every OS rather than only where the native separator is "/".
+            rel = path.relative_to(root).as_posix()
+            problems.append(
+                f"{rel} is {size} bytes, over its own {budget}-byte budget. "
+                "Route the new material to the document that owns its task "
+                "instead of adding it to the floor.")
     return problems
 
 
@@ -1424,41 +1456,77 @@ def test_agents_md_is_the_shared_always_on_floor():
 
 
 def test_the_always_loaded_runtime_contract_stays_inside_its_budget():
-    """#507: what a host loads before answering a live decision is bounded.
+    """What a host loads before answering a live decision is bounded, per host.
 
-    This is the mechanism that replaced several deleted wording locks. Those
-    pinned individual sentences and could not see the actual regression -- a
-    floor that keeps every pinned phrase and still grows a route manual around
-    them. A budget over the pair sees exactly that and nothing else.
+    #507 built the mechanism that replaced several deleted wording locks --
+    those pinned individual sentences and could not see the actual
+    regression, a floor that keeps every pinned phrase and still grows a
+    route manual around them. #838 split the one pair budget into two, one
+    per scenario, so growth in the installed host's surface (SKILL.md) can no
+    longer eat the checkout floor's headroom (AGENTS.md), or the reverse.
     """
     problems = always_loaded_runtime_violations(ROOT)
     assert not problems, "the always-loaded runtime contract grew back:\n  " + "\n  ".join(problems)
 
 
 def test_always_loaded_runtime_budget_mutations_are_caught():
-    """Mutation proof: a floor over budget, and a missing surface, both redden.
+    """Mutation proof: each budget reddens on its own, by name.
 
-    Without the second half a rename would silently disable the gate -- the
-    check would find nothing to measure and report nothing wrong.
+    Without the missing-file arms a rename would silently disable the gate.
+    Without checking each over-budget arm *while the other file stays inside
+    its own budget*, a bug that always blamed one file, or blamed both files
+    together, would pass every other assertion in this suite unnoticed.
     """
-    assert ALWAYS_LOADED_RUNTIME_BUDGET_BYTES == 16 * 1024, \
-        "the budget #507 agreed is 16 KiB; changing it needs an owner ruling, not an edit"
+    assert INSTALLED_CONTRACT_BUDGET_BYTES == 12 * 1024, (
+        "#838's owner ruling set the installed host's entire always-loaded "
+        "surface (skills/fomo-kernel/SKILL.md alone, since README.md installs "
+        "the product by symlinking that directory alone) at 12 KiB; changing "
+        "it needs an owner ruling, not an edit")
+    assert CHECKOUT_FLOOR_BUDGET_BYTES == 8 * 1024, (
+        "#838's owner ruling split this out of #507's original 16 KiB pair "
+        "budget as the checkout-only floor (AGENTS.md alone) at 8 KiB; "
+        "changing it needs an owner ruling, not an edit")
+
     with tempfile.TemporaryDirectory() as tmp:
         fake = Path(tmp)
         skill_dir = fake / "skills" / "fomo-kernel"
-        skill_dir.mkdir(parents=True)
+        skill_path = skill_dir / "SKILL.md"
+        agents_path = fake / "AGENTS.md"
+
         assert always_loaded_runtime_violations(fake), \
-            "a tree with neither surface would stay green"
-        (fake / "AGENTS.md").write_text("floor", encoding="utf-8")
+            "an empty tree would stay green"
+
+        skill_dir.mkdir(parents=True)
+        skill_path.write_text("contract", encoding="utf-8")
+        assert always_loaded_runtime_violations(fake), \
+            "a tree missing AGENTS.md would stay green"
+
+        skill_path.unlink()
+        agents_path.write_text("floor", encoding="utf-8")
         assert always_loaded_runtime_violations(fake), \
             "a tree missing SKILL.md would stay green"
-        (skill_dir / "SKILL.md").write_text("contract", encoding="utf-8")
+
+        skill_path.write_text("contract", encoding="utf-8")
         assert not always_loaded_runtime_violations(fake), "fixture assumption broken"
-        (skill_dir / "SKILL.md").write_text(
-            "x" * ALWAYS_LOADED_RUNTIME_BUDGET_BYTES, encoding="utf-8")
+
+        # SKILL.md over its own budget; AGENTS.md stays inside its own.
+        skill_path.write_text(
+            "x" * (INSTALLED_CONTRACT_BUDGET_BYTES + 1), encoding="utf-8")
         problems = always_loaded_runtime_violations(fake)
-        assert any("over the" in problem for problem in problems), \
-            "an over-budget runtime contract left the gate green"
+        assert any("skills/fomo-kernel/SKILL.md is" in problem for problem in problems), \
+            "an over-budget SKILL.md left the gate green, or did not name the file"
+        assert not any("AGENTS.md is" in problem for problem in problems), \
+            "SKILL.md alone was over budget; AGENTS.md must not be blamed too"
+
+        # Reverse: AGENTS.md over its own budget; SKILL.md stays inside its own.
+        skill_path.write_text("contract", encoding="utf-8")
+        agents_path.write_text(
+            "x" * (CHECKOUT_FLOOR_BUDGET_BYTES + 1), encoding="utf-8")
+        problems = always_loaded_runtime_violations(fake)
+        assert any("AGENTS.md is" in problem for problem in problems), \
+            "an over-budget AGENTS.md left the gate green, or did not name the file"
+        assert not any("skills/fomo-kernel/SKILL.md is" in problem for problem in problems), \
+            "AGENTS.md alone was over budget; SKILL.md must not be blamed too"
 
 
 def test_the_maintainer_guide_holds_the_shared_contract():

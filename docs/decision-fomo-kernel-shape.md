@@ -240,8 +240,9 @@ Split the current non-goal in two:
   recommendation may rest on sourced public facts and labelled agent judgment
   with or without a book. Explicit discovery reports its universe, filters,
   as-of date, material exclusions, and never claims exhaustive coverage. When a
-  portfolio consequence matters, each candidate is evaluated ephemerally and
-  only the selected or still-live candidate is rerun persistently.
+  portfolio consequence matters, each candidate is evaluated ephemerally, and a
+  persistent rerun requires the user's explicit selection — a standing
+  recommendation is not one.
 - **Market forecasts — judgment, never engine fact.** "This position takes your
   semiconductor exposure to 48%" is anchored in the user's record and checkable
   now. "NVDA reaches $250" is a forecast and must carry assumptions,
