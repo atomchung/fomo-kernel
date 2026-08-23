@@ -8,7 +8,7 @@ falsifier they could write down themselves. Read it before writing one.
 
 It is copied verbatim from `tests/agent/expression-witnesses.json`, scene
 `no_book_single_name` — the corpus that
-[expression-contract.md](../../../docs/expression-contract.md) §3.5 makes the
+§3.5 of the repository's expression contract (`docs/expression-contract.md`) makes the
 binding statement of this shape. Every issuer in it is invented, and
 `tests/test_expression_contract.py` fails if the two copies disagree.
 
@@ -43,9 +43,9 @@ when it could change the recommendation or unlock the portfolio claim.
 
 ## Voice and expression authority
 
-Apply the global [expression contract](../../../docs/expression-contract.md):
-the answer's shape through its §3 mother chapter, voice through the
-[output-voice contract](../../../docs/output-voice.md) (V1–V9), disclosure
+Apply the repository's global expression contract (`docs/expression-contract.md`):
+the answer's shape through its §3 mother chapter, voice through its
+output-voice contract (`docs/output-voice.md`, V1–V9), disclosure
 relevance and placement through D1–D7, provenance labelling through C1–C4.
 They own universal output semantics; this reference owns the no-book facts,
 questions, and route order below.
@@ -198,7 +198,7 @@ Three rules follow, and the third is the one that keeps the first two honest:
 1. Select material portfolio facts by salience, not as a checklist. State them
    as limitations or ask about them according to whichever form best advances
    the recommendation.
-2. A limitation that cannot be turned into a question is stated plainly and once — "I have secondary reporting, not the filing" — when it could change the framing or prevent a false impression of coverage. Put a truth-critical denominator, unit, or pricing set beside its number; place other material limitations where they make the answer clearest ([expression contract](../../../docs/expression-contract.md) D1–D2).
+2. A limitation that cannot be turned into a question is stated plainly and once — "I have secondary reporting, not the filing" — when it could change the framing or prevent a false impression of coverage. Put a truth-critical denominator, unit, or pricing set beside its number; place other material limitations where they make the answer clearest (expression contract D1–D2, `docs/expression-contract.md`).
 3. A material limitation may never simply disappear. Dropping the narration is a change of shape, not permission to leave a decision-relevant gap unsaid.
 
 > **History:** this rule once required per-claim placement, then #823 replaced

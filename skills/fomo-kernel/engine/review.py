@@ -8231,7 +8231,7 @@ def _positions_diagnosis(rows, canonical_held, weights, last_px, max_pos_overrid
     weights for the same ticker at the same instant depending on which
     entry point answered -- 28.6% from the FIFO route this function used to
     read, 37.5% from `consider`'s canonical one, and weight is the number
-    this product's own rules are built on. `AGENTS.md` boundary 6 --
+    this product's own rules are built on. `AGENTS.md` boundary 2 --
     ledger-derived current holdings stay canonical -- settles which one
     wins, and issue #456 already owns the general tension (a considered
     trade reasons on a different basis than a review's own CSV/FIFO path);

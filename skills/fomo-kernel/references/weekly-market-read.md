@@ -8,7 +8,7 @@ the next-week check closes. Read it before writing one.
 
 It is copied verbatim from `tests/agent/expression-witnesses.json`, scene
 `weekly_read_connection` — the corpus that
-[expression-contract.md](../../../docs/expression-contract.md) §3.5 makes the
+§3.5 of the repository's expression contract (`docs/expression-contract.md`) makes the
 binding statement of this shape. Every issuer in it is invented, and
 `tests/test_expression_contract.py` fails if the two copies disagree.
 
@@ -41,8 +41,8 @@ commitment, or canonical state. A public L1 event, if a host later adds one,
 must follow `market-lookup.md`: one triggered packet maximum, source/as-of on
 every public fact, and never infer the user's motive.
 
-How that brief is said is not this file's to decide: apply the global
-[expression contract](../../../docs/expression-contract.md) — the answer's
+How that brief is said is not this file's to decide: apply the repository's global
+expression contract (`docs/expression-contract.md`) — the answer's
 shape through its §3 mother chapter, voice V1–V9, disclosure relevance and
 placement D1–D7, provenance labelling C1–C4. Source and as-of on a public fact
 are C2; the labelled judgment risk is C1. This file owns only what the read may

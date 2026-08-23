@@ -35,7 +35,7 @@ this file states.
 
 A prior is a claim authority, not a block, a question, or a standing paragraph:
 it adds no shape parameter to any surface, so the increment gate in
-[expression-contract.md](../../../docs/expression-contract.md) §3 governs it
+the repository's expression contract (`docs/expression-contract.md`) §3 governs it
 like every other block. One that changes nothing about what the user should do
 is deleted, not shortened.
 

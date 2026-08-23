@@ -1,6 +1,6 @@
 # Review card content specification
 
-> Structure authority is [docs/output-contract.md](../../docs/output-contract.md);
+> Structure authority is the repository's `docs/output-contract.md`;
 > execution is `engine/card_renderer.py` plus `references/card-policy.md`. This
 > file records what the card is for and how to word the honesty sentences the
 > agent owns. Agents do not assemble or redact cards manually.

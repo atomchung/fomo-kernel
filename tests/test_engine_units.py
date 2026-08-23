@@ -2050,7 +2050,9 @@ def test_resolve_cash_anchor_input_refuses_a_non_positive_held_mv():
     """Fails closed rather than converting against a garbage denominator
     (#662) -- zero, negative, non-finite, and missing all refuse the same
     way a missing/incompatible valuation refuses elsewhere (AGENTS.md
-    boundary 6), instead of silently producing a zero or nonsensical amount."""
+    invariant 2: the engine owns every portfolio-derived number and never
+    fabricates one), instead of silently producing a zero or nonsensical
+    amount."""
     anchor = {"currency": "USD", "percent_of_total": 30, "as_of": "2026-07-30"}
     for bad_held_mv in (0.0, -1.0, float("nan"), float("inf"), None):
         try:
