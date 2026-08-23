@@ -9,7 +9,7 @@ and one end block. Read it before writing one.
 
 It is copied verbatim from `tests/agent/expression-witnesses.json`, scene
 `freeform_positions_view` — the corpus that
-the repository's expression contract (`docs/expression-contract.md`) §3.5 makes the
+§3.5 of the repository's expression contract (`docs/expression-contract.md`) makes the
 binding statement of this shape. Every issuer in it is invented, and
 `tests/test_expression_contract.py` fails if the two copies disagree.
 
@@ -180,7 +180,7 @@ calculate, interpolate, or silently widen them.
 
 ## Rule 4 — limitations follow relevance, not a template
 
-Use the expression contract's D1–D7 for
+Use the expression contract's D1–D7 (`docs/expression-contract.md`) for
 every limitation. Keep truth-critical denominator, unit, or pricing-set
 qualifiers inline. Include other limitations only when they materially qualify
 the answer; no marker or numeric line cap is required.

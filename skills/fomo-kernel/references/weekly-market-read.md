@@ -8,7 +8,7 @@ the next-week check closes. Read it before writing one.
 
 It is copied verbatim from `tests/agent/expression-witnesses.json`, scene
 `weekly_read_connection` — the corpus that
-the repository's expression contract (`docs/expression-contract.md`) §3.5 makes the
+§3.5 of the repository's expression contract (`docs/expression-contract.md`) makes the
 binding statement of this shape. Every issuer in it is invented, and
 `tests/test_expression_contract.py` fails if the two copies disagree.
 

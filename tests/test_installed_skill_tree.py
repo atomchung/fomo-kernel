@@ -255,49 +255,69 @@ def citation_violations(sources):
     ]
 
 
-MARKDOWN_LINK_TARGET = re.compile(r"\]\(([^)\s]+)\)")
-# An upward-relative path into a maintainer directory, in any syntax -- link
-# target or inline code. `../schemas/...` never matches: schemas/ is inside
-# the tree, and the directories named here are the maintainer layer.
-UPWARD_MAINTAINER_PATH = re.compile(r"(?:\.\./)+(?:docs|evals|tests)/")
+# Every syntax a target travels in: inline markdown links (title and
+# angle-bracket forms included), reference-style definitions, and HTML
+# href/src attributes. A fourth arm below catches upward-relative path
+# tokens outside any link syntax -- inline code, prose, fenced commands.
+INLINE_LINK_TARGET = re.compile(r"\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)")
+REFERENCE_LINK_DEF = re.compile(r"^\s*\[[^\]]+\]:\s*<?(\S+?)>?\s*$")
+HTML_ATTR_TARGET = re.compile(r"(?:href|src)=\"([^\"]+)\"")
+UPWARD_PATH_TOKEN = re.compile(r"(?:\.\./)+[A-Za-z0-9_.@/-]+")
+EXTERNAL_URL = re.compile(r"(?:https?://|mailto:|data:)\S+")
 
 
-def escaping_reference_violations(md_sources):
+def _escapes_tree(base, target):
+    """Whether ``target``, referenced from directory ``base``, leaves the tree.
+
+    Lexical, never touching the filesystem, so mutation arms can drive it on
+    doctored text. A site-root or absolute target counts as an escape: the
+    installed tree cannot promise anything about where it is mounted, so the
+    only paths it may resolve are its own relative interior.
+    """
+    target = target.split("#", 1)[0]
+    if not target or EXTERNAL_URL.match(target):
+        return False
+    if target.startswith("/"):
+        return True
+    return posixpath.normpath(posixpath.join(base, target)).startswith("..")
+
+
+def escaping_reference_violations(sources):
     """``"file:line: reason"`` for every reference that escapes the tree (#839).
 
     The installed tree may *name* its out-of-tree authorities -- "the
     repository's `docs/expression-contract.md`" is a citation, like naming a
     book -- because every rule an answer needs is stated in-tree and the
     authority reference is provenance for maintainers. What it may not do is
-    *link* there: a relative link promises the reader the file is right
-    there, and on an installed host that promise is false. Two checks: every
-    markdown link target must resolve inside the tree, and no upward-relative
-    path into a maintainer directory may appear in any syntax.
+    *link or path* there: a resolvable-looking reference promises the reader
+    the file is right there, and on an installed host that promise is false.
+    Every extracted target and every upward-relative path token, in any
+    syntax, must resolve inside the tree -- resolution decides, not a
+    directory name list, so in-tree upward hops (`../schemas/`, `../evals/`)
+    stay legal while any escape reddens whatever it points at.
     """
     violations = []
-    for rel, text in md_sources:
+    for rel, text in sources:
         base = posixpath.dirname(rel)
         for number, line in enumerate(text.splitlines(), 1):
-            for match in MARKDOWN_LINK_TARGET.finditer(line):
-                target = match.group(1).split("#", 1)[0]
-                if not target or target.startswith(
-                        ("http://", "https://", "mailto:")):
-                    continue
-                resolved = posixpath.normpath(posixpath.join(base, target))
-                if resolved.startswith(".."):
+            targets = [m.group(1) for m in INLINE_LINK_TARGET.finditer(line)]
+            targets += [m.group(1) for m in HTML_ATTR_TARGET.finditer(line)]
+            definition = REFERENCE_LINK_DEF.match(line)
+            if definition:
+                targets.append(definition.group(1))
+            for target in targets:
+                if _escapes_tree(base, target):
                     violations.append(
                         f"{rel}:{number}: link escapes the installed tree: "
-                        f"{match.group(1)}")
-            if UPWARD_MAINTAINER_PATH.search(line):
-                violations.append(
-                    f"{rel}:{number}: upward path into a maintainer "
-                    f"directory: {line.strip()[:100]}")
+                        f"{target}")
+            # Outside link syntax entirely. External URLs are stripped first
+            # so a `/../` segment inside one is not read as a local path.
+            for token in UPWARD_PATH_TOKEN.finditer(EXTERNAL_URL.sub("", line)):
+                if _escapes_tree(base, token.group(0)):
+                    violations.append(
+                        f"{rel}:{number}: upward path escapes the installed "
+                        f"tree: {token.group(0)}")
     return violations
-
-
-def markdown_sources(tree):
-    return [(rel, text) for rel, text in iter_text_runtime_sources(tree)
-            if rel.endswith(".md")]
 
 
 def test_every_boundary_phrase_is_present_in_the_installed_tree():
@@ -340,15 +360,19 @@ def test_no_file_under_the_installed_tree_cites_agents_md():
 
 
 def test_no_reference_escapes_the_installed_tree():
-    """#839: nine files linked `../../docs/...` and one linked `../../evals/`
-    -- seventeen dead pointers on an installed host, the same delivery class
-    as #838's unreachable `AGENTS.md`. Authorities are now cited by
+    """#839: nine files carried seventeen upward-relative links -- sixteen
+    into `docs/` and one into `evals/` -- every one a dead pointer on an
+    installed host, the same delivery class as #838's unreachable
+    `AGENTS.md`. Authorities are now cited by
     repository path in prose; the rules those authorities own are stated
     in-tree (the answer shape is SKILL.md's own projection, each reference
     opens with its exemplar, card structure is enforced by the engine
-    renderer), so no link needs to leave the tree.
+    renderer), so no reference needs to leave the tree. Scanned over every
+    text runtime surface, the same scope as the citation ban above -- the
+    card templates carry href/src attributes too.
     """
-    violations = escaping_reference_violations(markdown_sources(SKILL_TREE))
+    violations = escaping_reference_violations(
+        iter_text_runtime_sources(SKILL_TREE))
     assert not violations, (
         "references escape skills/fomo-kernel/ (dead on an installed "
         "host):\n  " + "\n  ".join(violations)
@@ -356,46 +380,59 @@ def test_no_reference_escapes_the_installed_tree():
 
 
 def test_escape_gate_mutations_are_caught():
-    """(a) the real tree is green; (b) an escaping link injected into a
-    nested file reddens naming that file; (c) an upward inline-code path with
-    no link syntax reddens; (d) an escaping link from a top-level file (one
-    `../` is enough there) reddens; (e) an in-tree `../schemas/` link stays
-    green -- the negative arm that proves the gate rejects escapes, not
-    relative links as such.
+    """Every extraction syntax and both resolution rules, each driven through
+    the same ``escaping_reference_violations`` the live test runs, on the
+    real tree's own sources with one thing injected -- plus two in-tree
+    negative arms proving the gate rejects escapes, not relative paths as
+    such. The adversarial probe set that shaped this list: titled links,
+    HTML href, reference-style definitions, site-root targets, and non-docs
+    escape targets all previously slipped the gate; in-tree `../evals/` was
+    previously a false red.
     """
-    real = markdown_sources(SKILL_TREE)
+    real = list(iter_text_runtime_sources(SKILL_TREE))
     assert not escaping_reference_violations(real), (
         "fixture assumption broken: the real tree already escapes")
 
     nested = "references/agent-boundaries.md"
-    assert any(rel == nested for rel, _ in real), (
-        "fixture assumption broken: the markdown walk did not reach "
-        f"{nested}")
+    for required in (nested, "card-template.html"):
+        assert any(rel == required for rel, _ in real), (
+            f"fixture assumption broken: the source walk did not reach "
+            f"{required}")
 
-    def with_appended(rel_target, extra):
-        return [(rel, text + extra if rel == rel_target else text)
-                for rel, text in real]
+    def reddens(rel_target, extra, label):
+        mutated = [(rel, text + extra if rel == rel_target else text)
+                   for rel, text in real]
+        violations = escaping_reference_violations(mutated)
+        assert any(v.startswith(f"{rel_target}:") for v in violations), (
+            f"{label} injected into {rel_target} stayed green")
 
-    linked = escaping_reference_violations(
-        with_appended(nested, "\nSee [the contract](../../docs/expression-contract.md).\n"))
-    assert any(v.startswith(f"{nested}:") for v in linked), (
-        "an escaping link injected into a nested file stayed green")
+    def stays_green(rel_target, extra, label):
+        mutated = [(rel, text + extra if rel == rel_target else text)
+                   for rel, text in real]
+        violations = escaping_reference_violations(mutated)
+        assert not violations, f"{label} was falsely flagged: {violations}"
 
-    coded = escaping_reference_violations(
-        with_appended(nested, "\nSee `../../docs/expression-contract.md`.\n"))
-    assert any(v.startswith(f"{nested}:") for v in coded), (
-        "an upward inline-code path with no link syntax stayed green")
+    reddens(nested, "\nSee [the contract](../../docs/expression-contract.md).\n",
+            "a plain escaping link")
+    reddens(nested, "\nSee [it](../../README.md \"readme\").\n",
+            "a titled link to a non-docs out-of-tree target")
+    reddens(nested, "\n[floor]: ../../AGENTS.md\n",
+            "a reference-style link definition")
+    reddens("card-template.html",
+            "\n<a href=\"../../docs/output-contract.md\">structure</a>\n",
+            "an HTML href escape in a card template")
+    reddens(nested, "\nSee `../../evals/episodes/README.md`.\n",
+            "an upward inline-code path into evals/")
+    reddens(nested, "\nSee [the root](/docs/output-contract.md).\n",
+            "a site-root target")
+    reddens("SKILL.md", "\nSee [the floor](../AGENTS.md).\n",
+            "a top-level file escaping with a single ../")
 
-    top = escaping_reference_violations(
-        with_appended("SKILL.md", "\nSee [the floor](../AGENTS.md).\n"))
-    assert any(v.startswith("SKILL.md:") for v in top), (
-        "a top-level file escaping with a single ../ stayed green")
-
-    in_tree = escaping_reference_violations(
-        with_appended(nested, "\nSee [the schema](../schemas/trade-premise.schema.json).\n"))
-    assert not in_tree, (
-        "an in-tree ../schemas/ link was flagged -- the gate must reject "
-        f"escapes, not relative links as such: {in_tree}")
+    stays_green(nested,
+                "\nSee [the schema](../schemas/trade-premise.schema.json).\n",
+                "an in-tree ../schemas/ link")
+    stays_green(nested, "\nThe bank is `../evals/evals.json`.\n",
+                "an in-tree ../evals/ code span")
 
 
 def test_boundary_and_citation_checks_are_mutation_proof():
