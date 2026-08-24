@@ -164,7 +164,7 @@
         },
         {
           "text": "我看不到你在別處的餘額",
-          "adds": "the boundary: balances outside the recorded book, stated once"
+          "adds": "the boundary: balances outside the book, stated once"
         },
         {
           "text": "最小的一刀是減掉現在最大的那筆的三分之一",
@@ -388,7 +388,7 @@
           "adds": "the two observable falsifiers that would reopen the add"
         },
         {
-          "text": "在那之前，要增加曝險，先把部位降回 30% 內",
+          "text": "在那之前，若仍要增加曝險，就把這筆縮到買後仍不超過 30%；不要先跨過自己的線，再等交易替你證明自己",
           "adds": "the smallest action that makes another add compatible with the user's rule"
         },
         {
@@ -396,7 +396,7 @@
           "adds": "the caliber block: book, pricing session, outside sources, and material gaps"
         }
       ],
-      "answer": "先不要加 WDGT：這筆會把部位從 28.6% 推到 32.4%，先跨過你自己寫的 30% 上限，而收購的價值仍取決於尚未驗證的融資與整合。\n\n交易不是免費增長：WDGT 為 Fabrion 報價 $4.2B，預計 60% 舉債、40% 發股，交割還要過監管（WDGT 8-K，2026-08-12）。新增的是 18% 產能，交割時只帶來 6% EBITDA；管理層把 70% 協同效益放在十八個月後（WDGT 投資人簡報，2026-08-12），所以營運好處和資產負債表壓力不是同時兌現。\n\n形式上淨負債／EBITDA 會從 2.1 倍升到 3.9 倍，Northstar Ratings 已列入負向觀察（2026-08-13）。這不是賣出理由：現有部位的核心 thesis 還沒有被公告本身推翻；但在證據到位前，把超過上限的部位繼續放大，等於同時押融資、監管與整合三件事。\n\n會讓我改口的證據有兩個：最終融資把舉債比例壓到 40% 以下，或交割後兩季的協同效益 run-rate 達到管理層路徑。在那之前，要增加曝險，先把部位降回 30% 內。\n\n（帳本 8/14、價格 8/14 收盤；來源：WDGT 8-K／投資人簡報 8/12、Northstar Ratings 8/13；未評反壟斷通過機率與交易後估值）"
+      "answer": "先不要加 WDGT：這筆會把部位從 28.6% 推到 32.4%，先跨過你自己寫的 30% 上限，而收購的價值仍取決於尚未驗證的融資與整合。\n\n交易不是免費增長：WDGT 為 Fabrion 報價 $4.2B，預計 60% 舉債、40% 發股，交割還要過監管（WDGT 8-K，2026-08-12）。新增的是 18% 產能，交割時只帶來 6% EBITDA；管理層把 70% 協同效益放在十八個月後（WDGT 投資人簡報，2026-08-12），所以營運好處和資產負債表壓力不是同時兌現。\n\n形式上淨負債／EBITDA 會從 2.1 倍升到 3.9 倍，Northstar Ratings 已列入負向觀察（2026-08-13）。這不是賣出理由：現有部位的核心 thesis 還沒有被公告本身推翻；但在證據到位前，把超過上限的部位繼續放大，等於同時押融資、監管與整合三件事。\n\n會讓我改口的證據有兩個：最終融資把舉債比例壓到 40% 以下，或交割後兩季的協同效益 run-rate 達到管理層路徑。在那之前，若仍要增加曝險，就把這筆縮到買後仍不超過 30%；不要先跨過自己的線，再等交易替你證明自己。\n\n（帳本 8/14、價格 8/14 收盤；來源：WDGT 8-K／投資人簡報 8/12、Northstar Ratings 8/13；未評反壟斷通過機率與交易後估值）"
     },
     {
       "id": "freeform_degraded_pricing",
