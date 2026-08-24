@@ -166,7 +166,8 @@ re-deriving any of it, the same discipline this file already applies to
 every other engine number.
 
 Read its `sizing` block too, and relay what it says (#737). It carries the
-engine's own verdict on the weights it just emitted: whether a weight could be computed at all, the `aggregate_currency` those weights are measured in,
+engine's own verdict on the weights it just emitted: whether a weight could
+be computed at all, the `aggregate_currency` those weights are measured in,
 and — when one could not — every holding that has none, each with the
 engine's own reason, plus the missing prices or FX rates that explain it.
 Two things follow. A mixed-currency book's `value` is stated in each
