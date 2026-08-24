@@ -22,7 +22,7 @@ and `tests/test_expression_contract.py` fails if the two copies disagree.
 
 形式上淨負債／EBITDA 會從 2.1 倍升到 3.9 倍，Northstar Ratings 已列入負向觀察（2026-08-13）。這不是賣出理由：現有部位的核心 thesis 還沒有被公告本身推翻；但在證據到位前，把超過上限的部位繼續放大，等於同時押融資、監管與整合三件事。
 
-會讓我改口的證據有兩個：最終融資把舉債比例壓到 40% 以下，或交割後兩季的協同效益 run-rate 達到管理層路徑。在那之前，若仍要增加曝險，就把這筆縮到買後仍不超過 30%；不要先跨過自己的線，再等交易替你證明自己。
+會讓我重新評估 30% 內小幅加碼的證據有兩個：最終融資把舉債比例壓到 40% 以下，或交割後兩季的協同效益 run-rate 達到管理層路徑。在那之前，若仍要增加曝險，就把這筆縮到買後仍不超過 30%；不要先跨過自己的線，再等交易替你證明自己。
 
 （帳本 8/14、價格 8/14 收盤；來源：WDGT 8-K／投資人簡報 8/12、Northstar Ratings 8/13；未評反壟斷通過機率與交易後估值）
 ```
@@ -166,8 +166,7 @@ re-deriving any of it, the same discipline this file already applies to
 every other engine number.
 
 Read its `sizing` block too, and relay what it says (#737). It carries the
-engine's own verdict on the weights it just emitted: whether a weight could
-be computed at all, the `aggregate_currency` those weights are measured in,
+engine's own verdict on the weights it just emitted: whether a weight could be computed at all, the `aggregate_currency` those weights are measured in,
 and — when one could not — every holding that has none, each with the
 engine's own reason, plus the missing prices or FX rates that explain it.
 Two things follow. A mixed-currency book's `value` is stated in each
