@@ -24,7 +24,7 @@ and `tests/test_expression_contract.py` fails if the two copies disagree.
 
 會讓我重新評估 30% 內小幅加碼的證據有兩個：最終融資把舉債比例壓到 40% 以下，或交割後兩季的協同效益 run-rate 達到管理層路徑。在那之前，若仍要增加曝險，就把這筆縮到買後仍不超過 30%；不要先跨過自己的線，再等交易替你證明自己。
 
-（帳本 8/14、價格 8/14 收盤；來源：WDGT 8-K／投資人簡報 8/12、Northstar Ratings 8/13；未評反壟斷通過機率與交易後估值）
+（帳本 8/14、價格 8/14 收盤；未評反壟斷通過機率與交易後估值）
 ```
 
 The user does not only meet this product through `prepare → preview →
