@@ -60,8 +60,6 @@ Exploration leaves no canonical evaluation row.
 - **Unpriced instruments.** The payload says how to return them. Read closes from the publisher's page, transcribe the `references/price-feed.md` envelope, and rerun with `--prices <path>`. If none are published, `--prices-unavailable '<sources checked>'` refuses only the current-value portfolio consequence; still give supported non-portfolio judgment. Never invent, interpolate, or recall a price; missing is not delisted or zero.
 - **No recorded book.** `consider` fails closed for book-derived claims. Continue with supported research and judgment, and frame the decision under `references/decision-framing.md`; do not manufacture portfolio precision or persist the conversation.
 
-A refusal does not end the turn. You still owe the judgment that holds without the numbers the engine would not compute — say plainly what could not be checked and name what would unblock it. Never present a degraded number as if it were the real one: a forward-looking decision is refused rather than answered on cost weights, which can invert which position is the largest.
-
 ## After the answer
 
 Persistent `consider` records the evaluation; `consider --ephemeral` does not. Say once that a record is a consideration, not an execution. When the user later says what they did, record it against the persistent evaluation rather than starting a new one:
