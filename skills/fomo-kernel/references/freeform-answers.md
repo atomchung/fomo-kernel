@@ -1,24 +1,30 @@
 # Freeform informational answers
 
-## The exemplar
+## The exemplars
 
-One whole freeform answer. This route adds no parameter of its own (rule 4
-below), so the exemplar is what this file has to show: the one position the
-question turns on, the rest of the computed inventory behind a single offer,
-and one end block. Read it before writing one.
+Two ends of one rule live on this surface. A simple lookup should still look
+like the compact `freeform_cash_question` or `freeform_positions_view` scenes
+in the corpus; do not inflate it. The fenced scene below is the **upper
+witness**: when a live decision genuinely turns on several sourced increments,
+the increment gate earns several blocks. It is not a minimum length, a default
+answer size, or permission to narrate research that does not change the call.
 
 It is copied verbatim from `tests/agent/expression-witnesses.json`, scene
-`freeform_positions_view` — the corpus that
+`freeform_research_depth` — the corpus that
 §3.5 of the repository's expression contract (`docs/expression-contract.md`) makes the
-binding statement of this shape. Every issuer in it is invented, and
-`tests/test_expression_contract.py` fails if the two copies disagree.
+binding statement of this shape. Every issuer and source in it is invented,
+and `tests/test_expression_contract.py` fails if the two copies disagree.
 
-```exemplar freeform_positions_view
-六檔裡只有一檔值得你現在看：GRDC 佔 31.4%，其餘五檔全在 10% 以下。
+```exemplar freeform_research_depth
+不要照原尺寸加 WDGT：這筆會把部位從 28.6% 推到 32.4%，先跨過你自己寫的 30% 上限，而收購的價值仍取決於尚未驗證的融資與整合。
 
-最大的那筆已經是第二大的三倍，其他五檔加起來還不到它。要完整的逐檔表（股數、成本、市值、損益、診斷標籤）跟我說一聲就給。
+交易不是免費增長：WDGT 為 Fabrion 報價 $4.2B，預計 60% 舉債、40% 發股，交割還要過監管（WDGT 8-K，2026-08-12）。新增的是 18% 產能，交割時只帶來 6% EBITDA；管理層把 70% 協同效益放在十八個月後（WDGT 投資人簡報，2026-08-12），所以營運好處和資產負債表壓力不是同時兌現。
 
-（帳本 8/14；價格 8/14 收盤；ETF 未拆解，成分重疊未評）
+形式上淨負債／EBITDA 會從 2.1 倍升到 3.9 倍，Northstar Ratings 已列入負向觀察（2026-08-13）。這不是賣出理由：現有部位的核心 thesis 還沒有被公告本身推翻；但在證據到位前，把部位推過上限，等於同時押融資、監管與整合三件事。
+
+會讓我重新評估 30% 內小幅加碼的證據有兩個：最終融資把舉債比例壓到 40% 以下，或交割後兩季的協同效益 run-rate 達到管理層路徑。在那之前，若仍要增加曝險，就把這筆縮到買後仍不超過 30%；不要先跨過自己的線，再等交易替你證明自己。
+
+（帳本 8/14、價格 8/14 收盤；未評反壟斷通過機率與交易後估值）
 ```
 
 The user does not only meet this product through `prepare → preview →
