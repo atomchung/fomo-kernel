@@ -138,13 +138,14 @@ CONTEXT_SCHEMA = _schema("decision-context.schema.json")
 # "properties" of its own any more to read a claim's shape off of.
 ANSWER_PROVENANCE_SCHEMA = _schema("answer-provenance.schema.json")
 # review.AGENT_CASE_PROVENANCE / answer_provenance.PROVENANCE's own values,
-# restated here only as dict keys into ANSWER_PROVENANCE_SCHEMA's three
+# restated here only as dict keys into ANSWER_PROVENANCE_SCHEMA's four
 # per-provenance $defs -- the same mapping idea
 # test_answer_provenance.py's _CLAIM_DEF_BY_PROVENANCE already uses for the
 # identical lookup in that file's own suite.
 _CLAIM_DEF_BY_PROVENANCE = {
     "engine_fact": "engineFactClaim",
     "public_fact": "publicFactClaim",
+    "user_record": "userRecordClaim",
     "agent_judgment": "judgmentClaim",
 }
 

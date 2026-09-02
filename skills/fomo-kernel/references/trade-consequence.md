@@ -3,23 +3,26 @@
 ## The exemplar
 
 One whole `consider` answer, over a three-candidate comparison: the stance and
-its deciding reason on top, the counter-side present only as the line that could
-overturn the pick, and the book date, the price session and the unevaluated
-valuation gap as one end block. Read it before writing one.
+its deciding reason on top — here the conditions and stances the user wrote in
+their own notes, quoted as theirs with each note's date, with the engine's
+consequence as the check on the pick rather than its lead — the counter-side
+present only as the line that could overturn the pick, and the book date, the
+price session, the date the notes were read and the unevaluated valuation gap
+as one end block. Read it before writing one.
 
 It is copied verbatim from `tests/agent/expression-witnesses.json`, scene
 `consider_three_way_comparison` — the corpus that
 §3.5 of the repository's expression contract (`docs/expression-contract.md`) makes the
-binding statement of this shape. Every issuer in it is invented, and
-`tests/test_expression_contract.py` fails if the two copies disagree.
+binding statement of this shape. Every issuer and every note in it is invented,
+and `tests/test_expression_contract.py` fails if the two copies disagree.
 
 ```exemplar consider_three_way_comparison
-三個裡我會選 GRDC 加 15 股。決定性理由：三案對組合的影響都在一個百分點內——誰都不改變你的集中度——真正有差的只有事件風險：WDGT 六天後出財報、預期已拉滿（公司財報行事曆，2026-08-14），這時把最大倉再加大，是三案裡波動最大的；FABR 18 股只佔 1.2%，公司再好這個大小也改變不了結果。GRDC 下次財報在十月底，中間乾淨，上季主業 +82%（公司財報，2026-07-30）撐著。
+三個裡我會選 GRDC 加 15 股。決定性理由是你自己寫的：7/30 你在 GRDC 的筆記裡把加碼條件定為「主業季增速守住 +50%」，上季 +82%（公司財報，2026-07-30）剛跨過去；WDGT 你 8/1 記了「財報前不加最大倉」，六天後就是財報（公司財報行事曆，2026-08-14）；FABR 你 7/22 的結論是「這個規模改變不了結果」，18 股只佔 1.2%，還是同一件事。帳上的檢查沒有反對：三案對組合的影響都在一個百分點內，誰都不改變你的集中度。
 
 反面就一條：前三大會從 51.3% 升到 51.9%（GRDC 本來就是第二大）——嫌集中的話這是三案共同的問題，答案是減碼不是選誰。
-會讓我改口：你本來就想賭財報超預期——那 WDGT 反而是最直接的表達，排序整個反過來。
+會讓我改口：你本來就想賭財報超預期——那 WDGT 反而是最直接的表達，但要先撤掉你 8/1 那條。
 
-（帳本 8/14、價格 8/14 收盤；三案動用 $4.4K／$5.1K／$4.9K；估值未評）
+（帳本 8/14、價格 8/14 收盤；你的筆記讀到 8/14；三案動用 $4.4K／$5.1K／$4.9K；估值未評）
 ```
 
 A user mid-decision asks something like *"I'm thinking of buying NVDA — what does that do to my book?"* They are not in a review and will not hand over a CSV. `consider` answers from what the product already stores: the local ledger, or transaction files if you have them in hand.
@@ -474,9 +477,9 @@ The floor did not move: the same rule effect, the same verbatim quote, the same 
 
 ## The recommendation case
 
-The engine states the consequence and rule collisions. Recommend what to do, then support it from that output and relevant sourced evidence. Include a counter-case only when it could change the action.
+The engine states the consequence and rule collisions. Read what the user already wrote about the names in play before arguing the case (`SKILL.md`, "The user's own record comes first"): a condition they set, a stance they recorded, a prior decision, may be the reason that decides, and the consequence then checks the pick. Recommend what to do, then support it from their record, the engine's output and relevant sourced evidence. Include a counter-case only when it could change the action.
 
-Every claim you add carries its own label: state your record says (drawn straight from `before`/`after`/`delta`/`rule_collisions`), a public fact (something you looked up, sourced), or your own judgment. Do not blend them into one unlabeled sentence. When and how to look something up at all — the standing position packet, the event-lookup triggers, the neutral query, the stop discipline — is [market-lookup.md](market-lookup.md)'s contract.
+Every claim you add carries its own label: state your record says (drawn straight from `before`/`after`/`delta`/`rule_collisions`), the user's own written record (quoted from their note, with the note and its date), a public fact (something you looked up, sourced), or your own judgment. Do not blend them into one unlabeled sentence, and never hand the user's own words back to them under another label. When and how to look something up at all — the standing position packet, the event-lookup triggers, the neutral query, the stop discipline — is [market-lookup.md](market-lookup.md)'s contract.
 
 `consider` measures weight, concentration, driver overlap, cash, and rule collisions. Liquidity, valuation, tax consequences, and position fit are available unchecked dimensions, not mandatory boilerplate. Name the ones that bear on the recommendation or prevent a false impression of coverage.
 
@@ -518,8 +521,9 @@ You may optionally structure this case with `--agent-case`, a path to a JSON fil
   "support": [
     {"claim": "This grows NVDA to 64% of the book.", "provenance": "engine_fact", "anchor": "consequence.after.max_pct"},
     {"claim": "This is priced on cost, not a live market value, so the weight above may be off.", "provenance": "engine_fact", "anchor": "consequence.disclosures.0"},
-    {"claim": "The record is several days stale.", "provenance": "engine_fact", "anchor": "basis.stale_days"},
-    {"claim": "The stock trades at a much higher earnings multiple than when you first bought it.", "provenance": "public_fact", "source": "Market data provider", "as_of": "2026-07-20"}
+    {"claim": "The record is 5 days stale.", "provenance": "engine_fact", "anchor": "basis.stale_days"},
+    {"claim": "The stock trades at a much higher earnings multiple than when you first bought it.", "provenance": "public_fact", "source": "Market data provider", "as_of": "2026-07-20"},
+    {"claim": "Your own note sets the add condition for this name at core growth holding above 50%, and this quarter it did not.", "provenance": "user_record", "source": "notes/NVDA.md", "as_of": "2026-07-30"}
   ],
   "counter_case": [
     {"claim": "You have historically held through drawdowns of this size in this name without selling.", "provenance": "agent_judgment"}
@@ -527,12 +531,13 @@ You may optionally structure this case with `--agent-case`, a path to a JSON fil
 }
 ```
 
-Structured claims only, never a free prose blob. New submissions require one `recommendation` (always `agent_judgment`) and non-empty `support`; `counter_case` is optional. The legacy `for`/`against` shape remains readable so stored history replays. Claim `provenance` is one of `engine_fact`, `public_fact`, or `agent_judgment`. This flag is optional; a plain `--premise` call is complete.
+Structured claims only, never a free prose blob. New submissions require one `recommendation` (always `agent_judgment`) and non-empty `support`; `counter_case` is optional. The legacy `for`/`against` shape remains readable so stored history replays. Claim `provenance` is one of `engine_fact`, `public_fact`, `user_record`, or `agent_judgment`. This flag is optional; a plain `--premise` call is complete.
 
 **A claim's provenance decides what else it must carry**, per `schemas/answer-provenance.schema.json`:
 
 - `engine_fact` must carry `anchor`: a dot-separated path into exactly this call's own frozen `basis`, `consequence`, or `rule_collisions` (`rule_collisions` is addressed by `rule_id`, e.g. `rule_collisions.rule-1.worsens`, never by list position). The path must resolve to one fact, never a container, and copy it verbatim from the JSON `consider` already handed you rather than retyping it by hand. When the resolved fact is a number, quote it in the claim's own prose within half a display unit, at whichever scale the record itself uses — a fraction-shaped value (weights, `max_pct`, `ai_pct`, …) is written ×100 as a percent, everything else (`stale_days`, share counts, dollar balances) as-is. A claim anchored at a `rule_collisions[...].rule_effect`, `.state` or `.worsens` field must also carry its own `rule_effect` string, matching the frozen one exactly, whenever that frozen effect describes a real transition (`new_breach`, `worsened_existing_breach`, `improved_but_still_over`, `resolved_existing_breach`, `unchanged_existing_breach`). Nothing offline can read your prose for direction, so the transition rides beside it and is checked exactly; a case built on the wrong one is refused rather than stored. `rule_effect` is forbidden on every other engine_fact claim, and `worsens` is the pre-#579 two-way version of the same declaration — still required on a stored row that predates `rule_effect`, optional and still checked beside it, forbidden anywhere else. See [Reading a rule collision](#reading-a-rule-collision) above.
 - `public_fact` must carry `source` (the named external source) and `as_of` (an ISO date). It must never restate what the user themselves said through `--decision-context`'s `reason`/`why_now` — copying the user's own words and relabelling them as an outside fact is refused, not stored.
+- `user_record` must carry `source` (the note it was read from, named the way the user would recognise it) and `as_of` (the date the note carries, or the day it was read). It is the user's own written record quoted as theirs — a thesis, a falsifier, an open question, a prior decision, a stated stance — and nothing else: no anchor (the engine did not freeze it) and no `rule_effect`. An AI-maintained status field about the user is not their belief and is not a `user_record`.
 - `agent_judgment` carries nothing beyond `claim` and `provenance`.
 
 **Everything on `required_coverage` must be covered, or the whole case is refused.** That list arrives in the same response ([What the answer owes](#what-the-answer-owes) above) — you do not have to derive it. For each entry, at least one `engine_fact` claim must anchor at or under its `path`: every key in the frozen `consequence.disclosures`, the `basis` whenever it is stale (`stale_days > 0`) or not a declared-complete snapshot, and every rule still over its line after this trade. This is why the example above anchors `consequence.disclosures.0` and `basis.stale_days` even though neither reads as dramatic on its own — leaving one out is refused the same as a wrong number, and silence about a rule the trade breaks reads to the user as a rule that held.

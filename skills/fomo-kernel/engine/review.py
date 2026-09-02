@@ -107,8 +107,10 @@ CONSIDER_DECISIONS = ("acted", "declined", "modified")
 # (docs/decision-fomo-kernel-shape.md §3: "mark each claim as your record says,
 # public fact, or my judgment"). engine_fact is that first category under a
 # name that reads correctly next to consequence.py's own output; public_fact
-# and agent_judgment are the doc's own words.
-AGENT_CASE_PROVENANCE = ("engine_fact", "public_fact", "agent_judgment")
+# and agent_judgment are the doc's own words; user_record (#844) is a claim
+# quoted from the user's own written record -- theirs, never the engine's,
+# never an outside source's, never the agent's.
+AGENT_CASE_PROVENANCE = ("engine_fact", "public_fact", "user_record", "agent_judgment")
 # #429's rule one layer up: an evaluation nobody reconciles is the same dead-
 # store shape that issue names for a question nobody reads. The bound is the
 # same discipline CONDITION_LOOKUP_CAP states just above -- the Review Plan is
@@ -7077,7 +7079,7 @@ def _validate_agent_case(payload):
 
     This does not enforce the exact field set a claim may carry — that set
     is provenance-dependent (``anchor``/``worsens`` for ``engine_fact``,
-    ``source``/``as_of`` for ``public_fact``; see
+    ``source``/``as_of`` for ``public_fact`` and ``user_record``; see
     ``schemas/answer-provenance.schema.json``'s ``$defs``) and is checked
     exactly once, by ``answer_provenance.validate_agent_case``, after the
     frozen ``consequence``/``rule_collisions`` this call needs actually

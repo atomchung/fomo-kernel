@@ -143,7 +143,7 @@ stated reason is actually a reason, what to buy, whether to sell. No single
 correct answer; the model has full latitude.
 
 The constraint is not a ban but a label: mark each claim as *your record says*,
-*public fact*, or *my judgment*. Per-sentence provenance is more useful than a
+*your own note says* (the fourth label, #844), *public fact*, or *my judgment*. Per-sentence provenance is more useful than a
 blanket disclaimer, and it is the mechanism that replaces prohibition.
 
 ## 4. Layer 2 tool inventory
