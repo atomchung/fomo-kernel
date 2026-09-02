@@ -1,6 +1,6 @@
 {
   "name": "fomo-kernel",
-  "description": "Help with investment decisions and explicit candidate searches — research, discover, compare, rank, and recommend with or without a recorded book. Use for buy, add, reduce, trade-review, brokerage-statement, and position-review decisions. A book adds engine-computed portfolio consequences. Never claim unsupported portfolio facts or execution.",
+  "description": "Help with investment decisions and explicit candidate searches — research, discover, compare, rank, and recommend with or without a recorded book, reading the user's own notes first when installed in their investing folder. Use for buy, add, reduce, trade-review, brokerage-statement, and position-review decisions. A book adds engine-computed portfolio consequences. Never claim unsupported portfolio facts or execution.",
   "version": "0.1.0",
   "author": {
     "name": "atomchung"

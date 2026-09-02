@@ -216,7 +216,8 @@ set in `tests/agent/expression-witnesses.json`. Three to five canonical
 exemplars per conversational surface, each declaring the one-sentence answer it
 leads with and the increment each of its blocks adds, plus counter-exemplars
 for the named bans. Every issuer in them is fictional (Widgetron WDGT,
-Gridcore GRDC, Fabrion FABR, ACME) and nothing is derived from a user record.
+Gridcore GRDC, Fabrion FABR, ACME) and nothing is derived from a real user
+record — the notes some scenes quote are invented with the issuers.
 
 Since #834 the corpus is not the only place they live. Each conversational
 surface's reference file **opens with its own copy of one of them**, so the
@@ -357,17 +358,19 @@ Four consequences the surfaces below inherit:
 
 | ID | Rule | Verification class | Named oracle |
 |---|---|---|---|
-| C1 | Three provenances, always distinguishable | deterministic fixture on a structured case; instruction elsewhere | `answer_provenance` |
+| C1 | Four provenances, always distinguishable | deterministic fixture on a structured case; instruction elsewhere | `answer_provenance` |
 | C2 | A public fact carries source and date, inline and minimal | deterministic fixture on a structured case | `answer_provenance` |
 | C3 | Common knowledge is not sourced | instruction only | — |
 | C4 | Never the engine's own vocabulary | deterministic fixture | `expression_oracle` (E-5), `answer_provenance` |
 
-### C1 — three provenances, always distinguishable
+### C1 — four provenances, always distinguishable
 
-Every claim in an answer is one of three things, and the reader can always tell
-which: **what the engine computed** from the user's own record, **a public fact**
-the agent looked up, or **the agent's own judgment**. Do not blend them into one
-unlabeled sentence.
+Every claim in an answer is one of four things, and the reader can always tell
+which: **what the engine computed** from the user's recorded book, **the user's
+own written record** — a note they wrote, quoted as theirs with its date (#844) —
+**a public fact** the agent looked up, or **the agent's own judgment**. Do not
+blend them into one unlabeled sentence, and never hand the user's own words
+back to them under another of the four labels.
 
 This is the default, on every surface — not a property of the optional
 `--agent-case` envelope. `schemas/answer-provenance.schema.json` is the

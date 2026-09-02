@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://fomo-kernel.local/schemas/answer-provenance.schema.json",
   "title": "Fomo Kernel Answer Provenance (issue #414, Wave A)",
-  "description": "Mechanical provenance contract for a structured --agent-case submitted to consider. The preferred shape states one recommendation, non-empty support, and a counter_case only when material. Every claim remains distinguishably an engine computation, sourced public fact, or agent judgment. The legacy for/against shape stays readable so append-only evaluation history remains valid; new callers should use positiveCase.",
+  "description": "Mechanical provenance contract for a structured --agent-case submitted to consider. The preferred shape states one recommendation, non-empty support, and a counter_case only when material. Every claim remains distinguishably an engine computation, a sourced public fact, the user's own written record, or agent judgment. The legacy for/against shape stays readable so append-only evaluation history remains valid; new callers should use positiveCase.",
   "type": "object",
   "oneOf": [
     {"$ref": "#/$defs/positiveCase"},
@@ -45,6 +45,7 @@
       "oneOf": [
         {"$ref": "#/$defs/engineFactClaim"},
         {"$ref": "#/$defs/publicFactClaim"},
+        {"$ref": "#/$defs/userRecordClaim"},
         {"$ref": "#/$defs/judgmentClaim"}
       ]
     },
@@ -83,6 +84,18 @@
         "provenance": {"const": "public_fact"},
         "source": {"type": "string", "minLength": 1, "description": "The named external source, e.g. a filing, a press release, a recognized market-data provider."},
         "as_of": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "The date the cited fact describes (or was read), an ISO date."}
+      }
+    },
+    "userRecordClaim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claim", "provenance", "source", "as_of"],
+      "description": "A claim quoted from the user's own written record (#844): a thesis, a falsifier, an open question, a prior decision or a stated stance they wrote themselves, read from the investing folder the skill is installed in. It is theirs -- never a public fact (no outside source stated it), never an engine fact (nothing computed it), never the agent's judgment (the agent did not form it). It carries the same source + as_of pair a public fact does, for the same reason: a record has a place it was read from and a date it carries. An AI-maintained status field about the user -- a health flag, a tier, a holding tag -- is not the user's belief and does not qualify.",
+      "properties": {
+        "claim": {"type": "string", "minLength": 1, "description": "The user's own words, quoted, or one sentence reporting exactly what their note says."},
+        "provenance": {"const": "user_record"},
+        "source": {"type": "string", "minLength": 1, "description": "The note it was read from, named the way the user would recognise it (a file path or a note title)."},
+        "as_of": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "The date the note carries, or the day it was read when it carries none; an ISO date."}
       }
     },
     "judgmentClaim": {

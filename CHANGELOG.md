@@ -3,6 +3,26 @@
 Notable changes to FOMO Kernel. Versions follow semantic versioning; while the
 major version is `0`, a minor bump may change a contract.
 
+## [Unreleased]
+
+### The user's own record comes first (#844)
+
+- The skill is installed inside the user's investing folder and reads what they
+  already wrote about the names in play — thesis, falsifiers, open questions,
+  prior decisions, stated stances — before it recommends. It quotes that record
+  as theirs, with the note and its date; an AI-maintained status field is a
+  tool's note about the user, not their belief. The deciding reason may come
+  from the record; the engine's consequence and rule collisions check the pick.
+- `--agent-case` gains a fourth claim class, `user_record`, carrying `source`
+  and `as_of` like a public fact and nothing else, so a quoted note no longer
+  has to wear another label. The expression contract's C1 now names four
+  provenances.
+- `references/trade-consequence.md` opens with a comparison whose deciding
+  reason is the user's own recorded condition; the owner-approved event-risk
+  comparison stays in the corpus.
+- The README install puts the skill under `<your investing folder>/.claude/skills/`
+  and says what is read there. Nothing read is written anywhere.
+
 ## [0.1.0] — 2026-08-06
 
 The first tagged release. Everything before it was untagged `main`.

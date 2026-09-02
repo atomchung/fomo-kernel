@@ -1,11 +1,11 @@
 ---
 name: fomo-kernel
-description: Help with investment decisions and explicit candidate searches — research, discover, compare, rank, and recommend with or without a recorded book. Use for buy, add, reduce, trade-review, brokerage-statement, and position-review decisions. A book adds engine-computed portfolio consequences. Never claim unsupported portfolio facts or execution.
+description: Help with investment decisions and explicit candidate searches — research, discover, compare, rank, and recommend with or without a recorded book, reading the user's own notes first when installed in their investing folder. Use for buy, add, reduce, trade-review, brokerage-statement, and position-review decisions. A book adds engine-computed portfolio consequences. Never claim unsupported portfolio facts or execution.
 ---
 
 # fomo-kernel
 
-Use relevant evidence and the recorded book when portfolio consequences matter; then recommend what to do. Missing inputs narrow claims, not Skill engagement. `references/agent-boundaries.md` holds throughout.
+Use the user's own written record, relevant evidence, and the recorded book when portfolio consequences matter; then recommend what to do. Missing inputs narrow claims, not Skill engagement. `references/agent-boundaries.md` holds throughout.
 
 ## Answer a live decision
 
@@ -25,7 +25,7 @@ First run only: `python3 engine/review.py doctor`. The engine fail-soft degrades
 
 ## The response is the contract
 
-The payload is the authority for portfolio facts. External research is optional and relevance-driven; when used, keep it sourced and separate from engine facts.
+The payload is the authority for portfolio facts; the user's own record is the authority for what they believed and decided (below). External research is optional and relevance-driven; when used, keep it sourced and separate from both.
 
 - `evaluation.consequence` — the book `before` and `after` the trade, and the `delta`: weights, largest position, top three, sector and AI share, cash. Also `disclosures`, and the holdings the numbers were measured *without*.
 - `evaluation.rule_collisions` — the user's own rules this trade touches, each with the `rule_effect` naming how it moves.
@@ -39,13 +39,17 @@ Read portfolio consequence from that payload — every portfolio-derived number,
 
 The engine computes portfolio consequence; it is not a company-research service. Look up current price, recent movement, valuation, an event, or operating evidence only when that fact is material to the user's question or could change the recommendation. A found event never becomes the user's motive until they confirm it is. `references/market-lookup.md` owns the bounded lookup and provenance contract.
 
+## The user's own record comes first
+
+Installed inside the user's investing folder, this skill reads what they already wrote about the names in play before it recommends — their thesis, falsifiers, open questions, prior decisions, and stated stances. Quote it verbatim, with the note and its date, as their record: never relabelled as a public fact, never as an engine fact, never rewritten into a category. An AI-maintained status field — a health flag, a tier, a holding tag — is a tool's note about the user, not their belief; their own words and their recorded actions are. The deciding reason may come from this record; the engine's consequence and rule collisions then check the pick rather than lead it. Nothing read here is written anywhere. With no such folder, the recorded book and sourced research carry the answer alone.
+
 ## Shape of the answer
 
 One shape, every answer (§3 of the repository's expression contract, `docs/expression-contract.md`, owns it; this is its projection, not a second wording). **A fact lives on exactly one floor, and twice is a bug.** *Top:* one sentence — the stance and the reason that decides it (proceed, resize, delay, collect evidence, choose one candidate, no trade). *Middle:* only blocks that add a new decision-relevant fact or judgment — delete one; if the decision does not change, delete it. There live the numbers that would flip the call, every `rule_effects` entry (never optional), a truth-critical denominator, unit, or pricing set beside its number, and a falsifier on any directional call — the counter-case needs no section. *Bottom:* the rest of the inventory stays in the data layer; say once you can expand it. *End:* one compact block for other material limitations; machine anchors and engine narration nowhere.
 
 Never manufacture a scenario nobody asked for, restate a system default as insight, hedge in couplets, or make one point twice. Ask only decision-changing questions, then stop. `references/trade-consequence.md` holds the rest. Each reference opens with its exemplar; follow it.
 
-Label judgment — thesis, valuation, timing, forecast, recommendation, ranking, selection — separate from engine facts. Give a target or forecast's material assumptions and uncertainty; never disguise it as fact or certainty. Never claim what the user did or will do.
+Label judgment — thesis, valuation, timing, forecast, recommendation, ranking, selection — separate from engine facts and from the user's own record. Give a target or forecast's material assumptions and uncertainty; never disguise it as fact or certainty. Never claim what the user did or will do.
 
 **Candidate discovery and comparison.** For an explicit search, report universe,
 filters, as-of point, material exclusions, and coverage limits; never imply

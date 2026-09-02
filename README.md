@@ -120,11 +120,14 @@ source .venv/bin/activate
 pip install -r skills/fomo-kernel/requirements.txt
 
 python3 skills/fomo-kernel/engine/review.py doctor
-mkdir -p ~/.claude/skills
-ln -s "$(pwd)/skills/fomo-kernel" ~/.claude/skills/fomo-kernel
+FOMO_KERNEL="$(pwd)"
+
+cd ~/path/to/your/investing/folder
+mkdir -p .claude/skills
+ln -s "$FOMO_KERNEL/skills/fomo-kernel" .claude/skills/fomo-kernel
 ```
 
-Launch Claude Code from a terminal where the virtual environment is active.
+Launch Claude Code from your investing folder, in a terminal where the virtual environment is active. Installed there, the skill reads what you already wrote about a name — your thesis, falsifiers, open questions, prior decisions — and quotes it as your record before it recommends; the engine's consequence then checks the pick. A status field a tool maintains about you is read as the tool's note, not as your belief, and nothing is written back. If you keep no such folder, symlink into `~/.claude/skills` instead and the recorded book and sourced research carry the answer alone.
 
 ### 2. Bring one real decision or one real record
 
@@ -237,7 +240,7 @@ FOMO Kernel does not:
 - claim that candidate discovery exhaustively screened the market;
 - make or execute the final buy/sell decision;
 - become a broker, wealth manager, or full investment operating system;
-- crawl or mirror your private research repository;
+- copy your notes folder into the engine or anywhere else — the agent reads what you wrote in place and quotes it as yours;
 - replace missing portfolio facts with invented portfolio numbers.
 
 It is research and decision-coaching support, not investment advice. You remain responsible for every investment decision and outcome.

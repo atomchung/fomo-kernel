@@ -503,6 +503,76 @@ def test_user_statement_with_different_whitespace_is_still_caught():
     _rejects("restates what the user said as public_fact", case, user_statements=[statement])
 
 
+# ───────────────────────── 9. the user's own written record (#844) ─────────────────────────
+
+def _user_record_claim(**overrides):
+    claim = {"claim": "Your note on this name sets the add condition at core growth holding above 50%.",
+             "provenance": "user_record", "source": "notes/NVDA.md", "as_of": "2026-07-30"}
+    claim.update(overrides)
+    return claim
+
+
+def test_a_user_record_claim_is_accepted():
+    """The fourth class exists so a quote from the user's own note has a label
+    it can honestly wear: not the engine's, not an outside source's, not the
+    agent's. A well-formed one is accepted beside the other three."""
+    case = _valid_case()
+    case["for"].append(_user_record_claim())
+    try:
+        _validate(case)
+    except answer_provenance.AnswerProvenanceError as exc:
+        raise AssertionError(f"a well-formed user_record claim must be accepted, got: {exc}") from exc
+
+
+def test_user_record_claim_missing_source_is_rejected():
+    case = _valid_case()
+    claim = _user_record_claim()
+    del claim["source"]
+    case["for"].append(claim)
+    _rejects("labelled user_record but is missing source", case)
+
+
+def test_user_record_claim_missing_as_of_is_rejected():
+    case = _valid_case()
+    claim = _user_record_claim()
+    del claim["as_of"]
+    case["for"].append(claim)
+    _rejects("labelled user_record but is missing as_of", case)
+
+
+def test_user_record_claim_with_a_non_date_as_of_is_rejected():
+    case = _valid_case()
+    case["for"].append(_user_record_claim(as_of="last week"))
+    _rejects("as_of is not an ISO date", case)
+
+
+def test_user_record_claim_cannot_carry_an_engine_anchor():
+    """A note is not a frozen engine value; an anchor beside it would claim
+    the engine froze what the user wrote."""
+    case = _valid_case()
+    case["for"].append(_user_record_claim(anchor="consequence.after.max_pct"))
+    _rejects("(user_record) carries fields it must not", case)
+
+
+def test_user_record_claim_matches_the_schemas_declared_shape():
+    schema = _schema("answer-provenance.schema.json")
+    defn = schema["$defs"][_CLAIM_DEF_BY_PROVENANCE["user_record"]]
+    claim = _user_record_claim()
+    assert set(defn["required"]) <= set(claim)
+    assert set(claim) <= set(defn["properties"])
+    assert defn["properties"]["provenance"] == {"const": "user_record"}
+    refs = {entry["$ref"] for entry in schema["$defs"]["claim"]["oneOf"]}
+    assert "#/$defs/userRecordClaim" in refs, "the schema's claim union does not admit the fourth class"
+
+
+def test_the_recommendation_itself_may_not_be_a_user_record():
+    """The stance is the agent's. Quoting the user's own note as the
+    recommendation would hand their words back to them as advice."""
+    case = _positive_case()
+    case["recommendation"] = _user_record_claim(claim="Add 20 shares.")
+    _rejects("recommendation must be labelled agent_judgment", case)
+
+
 # ───────────────────────── acceptance: a well-formed answer ─────────────────────────
 
 def test_a_well_formed_agent_case_is_accepted():
@@ -641,6 +711,7 @@ def test_provenance_vocabulary_matches_reviews_agent_case_provenance():
 _CLAIM_DEF_BY_PROVENANCE = {
     "engine_fact": "engineFactClaim",
     "public_fact": "publicFactClaim",
+    "user_record": "userRecordClaim",
     "agent_judgment": "judgmentClaim",
 }
 

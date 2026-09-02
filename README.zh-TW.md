@@ -119,11 +119,14 @@ source .venv/bin/activate
 pip install -r skills/fomo-kernel/requirements.txt
 
 python3 skills/fomo-kernel/engine/review.py doctor
-mkdir -p ~/.claude/skills
-ln -s "$(pwd)/skills/fomo-kernel" ~/.claude/skills/fomo-kernel
+FOMO_KERNEL="$(pwd)"
+
+cd ~/path/to/your/investing/folder
+mkdir -p .claude/skills
+ln -s "$FOMO_KERNEL/skills/fomo-kernel" .claude/skills/fomo-kernel
 ```
 
-請從已啟用虛擬環境的終端機啟動 Claude Code。
+請在你的投資資料夾裡、已啟用虛擬環境的終端機啟動 Claude Code。裝在那裡，skill 會先讀你已經寫下的東西——你對這檔的 thesis、失效條件、開放問題、先前的決定——以你的紀錄引用，再給建議；引擎算出的組合影響則用來檢查這個選擇。工具替你維護的狀態欄位會被當成工具的註記，不當成你的信念，而且不會寫回任何東西。若你沒有這樣的資料夾，改 symlink 到 `~/.claude/skills`，答案就只靠記錄的帳本和有來源的研究。
 
 ### 2. 帶進一個真實決策，或一份真實記錄
 
@@ -236,7 +239,7 @@ FOMO Kernel 不會：
 - 聲稱候選探索已窮盡整個市場；
 - 替你做或執行最後買賣決定；
 - 變成券商、財富管理或完整 investment OS；
-- 爬取或鏡像你的私人研究 repository；
+- 把你的筆記資料夾複製進引擎或任何地方——agent 只在原地讀你寫的東西，並以你的紀錄引用；
 - 用捏造的組合數字取代缺失的組合事實。
 
 它是研究與決策教練工具，不是投資建議。所有投資決定與結果仍由你負責。

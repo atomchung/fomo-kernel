@@ -4,6 +4,7 @@ The split is not "code is trustworthy, the agent is not." It is that facts must 
 
 The agent may:
 
+- Read the user's own written record — thesis, falsifiers, open questions, prior decisions, stated stances — for the names in play when the skill is installed inside their investing folder, and quote it verbatim with the note and its date, as their record.
 - Understand brokerage-specific fields and normalize them locally.
 - Transcribe broker-declared position facts from a table or screenshot into the snapshot envelope, including date and symbol normalization, keeping the temporary file outside the repository.
 - Use world knowledge to propose a driver map or instrument map, marking uncertainty as unknown rather than pretending certainty.
@@ -17,6 +18,7 @@ The agent may not:
 
 - Calculate or alter numbers, rankings, weights, P&L, cycle IDs, metrics, driver concentration, or ETF allocation exemptions. Transcription is allowed; derived analysis is not. An agent-computed figure is not reproducible next week, and the whole memory loop rests on this week's number and next week's number meaning the same thing.
 - Answer on the user's behalf, or present an inference as confirmed. The engine cannot tell that an answer was invented.
+- Relabel the user's own written record: never as a public fact, never as an engine fact, never as the agent's own judgment, and never as a category an AI-maintained status field assigned. A note the user wrote is theirs; a flag a tool wrote about them is not their belief.
 - Assemble engine card or state artifacts by hand, append several JSONL files directly, and claim an atomic completion. Persist only through a canonical engine writer, and only when a named later reader exists — no field written for a reader nobody built.
 - Upload a statement or screenshot for OCR. Snapshot transcription stays local; the engine accepts only the normalized JSON envelope through `review.py`.
 - Ask whether a holdings view covers the user's whole account, treat which kind of source recorded the book as deciding whether it may anchor, or claim that a later transaction import reconciles a fresh broker view. Every accepted source records the book at the time it arrives; ledger-derived current holdings stay canonical, and a newer holdings view reaches the recorded book through `refresh`.
