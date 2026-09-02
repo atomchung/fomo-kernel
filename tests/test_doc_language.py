@@ -155,6 +155,22 @@ NO_BOOK_FRAMING_REQUIRED_PHRASES = (
 # Scoped to the contract file alone, unlike NO_BOOK_FRAMING_SECTIONS above:
 # this mechanism is prose detail that lives entirely in the soft-routed
 # reference, and neither guaranteed-delivery entry point restates it.
+# #844: the user's own written record is the first evidence, stated in the
+# installed entry point and in the routed boundary file it names. Two files,
+# two phrase sets, one rule -- pinned the way the recorded-book and no-book
+# rules above are, so an edit that drops the never-relabel or the
+# not-their-belief clause from one side reddens instead of drifting.
+USER_RECORD_SECTIONS = {
+    Path("skills/fomo-kernel/SKILL.md"): ("## The user's own record comes first", (
+        "never relabelled as a public fact, never as an engine fact",
+        "not their belief",
+        "check the pick rather than lead it",
+    )),
+    Path("skills/fomo-kernel/references/agent-boundaries.md"): ("The agent may not:", (
+        "Relabel the user's own written record",
+        "a flag a tool wrote about them is not their belief",
+    )),
+}
 EVIDENCE_INVITATION_SECTIONS = {
     Path("skills/fomo-kernel/references/decision-framing.md"): "## Earning the next piece of evidence",
 }
@@ -539,15 +555,19 @@ def heading_levels(text):
 
 def test_readme_bash_commands_match_across_languages():
     en = normalized_shell_commands(README_EN_PATH.read_text(encoding="utf-8"))
-    zh = normalized_shell_commands(README_ZH_PATH.read_text(encoding="utf-8"))
     assert en, "no ```bash commands found in README.md — extraction likely broken"
-    only_en = en - zh
-    only_zh = zh - en
-    assert not only_en and not only_zh, (
-        "README.md and README.zh-TW.md bash commands drifted:\n"
-        f"  only in README.md: {sorted(only_en)}\n"
-        f"  only in README.zh-TW.md: {sorted(only_zh)}"
-    )
+    # Every localized README, not only zh-TW: the install block is one set
+    # of commands in three languages, and a third file outside the gate is
+    # a file that drifts unseen (#844 review).
+    for path in (README_ZH_PATH, README_ZH_CN_PATH):
+        localized = normalized_shell_commands(path.read_text(encoding="utf-8"))
+        only_en = en - localized
+        only_localized = localized - en
+        assert not only_en and not only_localized, (
+            f"README.md and {path.name} bash commands drifted:\n"
+            f"  only in README.md: {sorted(only_en)}\n"
+            f"  only in {path.name}: {sorted(only_localized)}"
+        )
 
 
 def test_readme_language_flag_values_match_locale():
@@ -1165,6 +1185,31 @@ def test_no_book_framing_mutations_are_caught():
         )
 
 
+def test_user_record_rule_is_stated_in_both_entry_points():
+    """#844: the entry point an installed host loads and the boundary file it
+    routes to both state the user's-record rule; a host reading only one of
+    them must not get a weaker rule than the other states."""
+    for rel, (heading, phrases) in USER_RECORD_SECTIONS.items():
+        section = markdown_section((ROOT / rel).read_text(encoding="utf-8"), heading)
+        for phrase in phrases:
+            assert phrase in section, f"{rel}: missing user-record phrase {phrase!r}"
+
+
+def test_user_record_rule_mutations_are_caught():
+    """Section-scoped mutation proof for the check above, on the committed text."""
+    for rel, (heading, phrases) in USER_RECORD_SECTIONS.items():
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        section = markdown_section(text, heading)
+        for phrase in phrases:
+            assert phrase in section, (
+                f"fixture assumption broken: {rel}'s {heading} no longer contains {phrase!r}"
+            )
+            mutated = text.replace(section, section.replace(phrase, "", 1), 1)
+            assert phrase not in markdown_section(mutated, heading), (
+                f"{rel}: mutation did not remove {phrase!r} -- the check would stay green"
+            )
+
+
 def test_evidence_invitation_mechanism_is_stated_in_the_contract():
     """#598 follow-up: decision-framing.md's closing invitation names the
     question a piece of evidence would answer, drawn from a small closed set
@@ -1680,6 +1725,8 @@ def main():
         test_no_book_framing_rule_is_stated_in_both_entry_points,
         test_no_book_framing_contract_is_a_routed_runtime_surface,
         test_no_book_framing_mutations_are_caught,
+        test_user_record_rule_is_stated_in_both_entry_points,
+        test_user_record_rule_mutations_are_caught,
         test_evidence_invitation_mechanism_is_stated_in_the_contract,
         test_evidence_invitation_mutations_are_caught,
         test_agent_runtime_surface_scope_is_bounded,

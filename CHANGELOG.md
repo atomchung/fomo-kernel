@@ -17,11 +17,12 @@ major version is `0`, a minor bump may change a contract.
   and `as_of` like a public fact and nothing else, so a quoted note no longer
   has to wear another label. The expression contract's C1 now names four
   provenances.
-- `references/trade-consequence.md` opens with a comparison whose deciding
-  reason is the user's own recorded condition; the owner-approved event-risk
-  comparison stays in the corpus.
+- `references/trade-consequence.md`'s opening comparison is revised in place:
+  its deciding reason is now the user's own recorded condition, with the
+  engine's consequence as the check; the pre-#844 text is in git history.
 - The README install puts the skill under `<your investing folder>/.claude/skills/`
-  and says what is read there. Nothing read is written anywhere.
+  and says what is read there. A quoted note is stored only inside a
+  consideration's own recorded case, on the user's machine, never elsewhere.
 
 ## [0.1.0] — 2026-08-06
 

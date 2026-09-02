@@ -252,9 +252,13 @@ the user as the agent's opinion of something they themselves wrote down.
 the same reason ``public_fact`` does — a record has a place it was read from
 and a date it carries, and a quote without either is a recollection — and
 nothing else, because an anchor would claim the engine froze it and a
-``rule_effect`` would claim it describes a collision. What the gate cannot
-decide is whether the text really is the user's own words rather than a
-status field a tool maintained about them; that reading rule lives in
+``rule_effect`` would claim it describes a collision. The two citing classes
+share one checker and one field constant (``_check_sourced_claim``,
+``_SOURCED_CLAIM_REQUIRED``), and case 8 runs in both directions: the
+user's words from this conversation may become neither an outside fact nor
+a dated note they never wrote. What the gate cannot decide is whether the
+text really is the user's own words rather than a status field a tool
+maintained about them; that reading rule lives in
 ``references/agent-boundaries.md`` and is instruction, not code.
 
 What this module does not do
@@ -331,11 +335,12 @@ _DISPLAY_TOLERANCE = 0.5
 _FRACTION_MAGNITUDE = 1.0 + 1e-9
 
 _JUDGMENT_FIELDS = frozenset({"claim", "provenance"})
-_PUBLIC_FACT_REQUIRED = frozenset({"claim", "provenance", "source", "as_of"})
-# The same pair a public fact carries, for the same reason (#844): a note the
-# user wrote has a place it was read from and a date it carries, and a
-# claim quoted from it without either is a memory, not a record.
-_USER_RECORD_REQUIRED = frozenset({"claim", "provenance", "source", "as_of"})
+# One citation shape for the two claim classes that cite something outside
+# the engine: a public fact names its outside source, a user record (#844)
+# names the note it was read from, and both carry the date the cited thing
+# bears. One constant and one checker (`_check_sourced_claim`), so the
+# citation contract cannot be edited for one class and missed for the other.
+_SOURCED_CLAIM_REQUIRED = frozenset({"claim", "provenance", "source", "as_of"})
 _ENGINE_FACT_ALLOWED = frozenset({"claim", "provenance", "anchor", "worsens", "rule_effect"})
 
 # Sentinel distinct from any real frozen value (including None, which this
@@ -543,15 +548,32 @@ def _check_engine_fact_claim(claim, label, record):
     return anchor, resolved
 
 
-def _check_public_fact_claim(claim, label, user_statements):
-    missing = _PUBLIC_FACT_REQUIRED - set(claim)
+def _is_iso_date(value):
+    """Exactly the schema's ``YYYY-MM-DD``. ``date.fromisoformat`` alone is not
+    that check: since Python 3.11 it also accepts ``20260730`` and
+    ``2026-W01-1``, so the parsed date is rendered back and compared -- the
+    same round trip ``review._canonical_iso_date`` runs, restated here rather
+    than imported (see the module docstring on why review.py is never
+    imported from this side)."""
+    if not isinstance(value, str):
+        return False
+    try:
+        return dt.date.fromisoformat(value).isoformat() == value
+    except ValueError:
+        return False
+
+
+def _check_sourced_claim(claim, label, kind):
+    """The citation core ``public_fact`` and ``user_record`` share: exactly the
+    four fields, a named source, and a date in the schema's own shape."""
+    missing = _SOURCED_CLAIM_REQUIRED - set(claim)
     if missing:
         raise AnswerProvenanceError(
-            f"{label} is labelled public_fact but is missing {', '.join(sorted(missing))}")
-    extra = set(claim) - _PUBLIC_FACT_REQUIRED
+            f"{label} is labelled {kind} but is missing {', '.join(sorted(missing))}")
+    extra = set(claim) - _SOURCED_CLAIM_REQUIRED
     if extra:
         raise AnswerProvenanceError(
-            f"{label} (public_fact) carries fields it must not: {sorted(extra)}")
+            f"{label} ({kind}) carries fields it must not: {sorted(extra)}")
     # .get(), not [] -- defense in depth if the `missing` gate above is ever
     # weakened by a future edit, this degrades to a clean AnswerProvenanceError
     # naming the field rather than an uncaught KeyError (exactly the failure
@@ -561,48 +583,30 @@ def _check_public_fact_claim(claim, label, user_statements):
     if not isinstance(source, str) or not source.strip():
         raise AnswerProvenanceError(f"{label}.source must be non-empty text")
     as_of = claim.get("as_of")
-    if not isinstance(as_of, str):
-        raise AnswerProvenanceError(f"{label}.as_of must be an ISO date (YYYY-MM-DD)")
-    try:
-        dt.date.fromisoformat(as_of.strip())
-    except ValueError:
-        raise AnswerProvenanceError(f"{label}.as_of is not an ISO date: {as_of!r}")
+    if not _is_iso_date(as_of):
+        raise AnswerProvenanceError(
+            f"{label}.as_of is not an ISO date (YYYY-MM-DD): {as_of!r}")
+
+
+def _check_public_fact_claim(claim, label, user_statements):
+    _check_sourced_claim(claim, label, "public_fact")
     if _restates_a_user_statement(claim["claim"], user_statements):
         raise AnswerProvenanceError(
             f"{label} restates what the user said as public_fact; a user statement may only be "
             "described as what the user stated, never promoted to an external fact")
 
 
-def _check_user_record_claim(claim, label):
-    """A claim quoted from the user's own written record (#844): a thesis,
-    a falsifier, an open question, a prior decision or a stated stance they
-    wrote themselves, read from their investing folder. It is theirs -- not
-    a public fact (no outside source stated it), not an engine fact
-    (nothing computed it), not the agent's judgment (the agent did not form
-    it) -- so it carries the one thing that makes it a record rather than a
-    recollection: where it was read and the date it carries. What this does
-    not decide is whether the note really is the user's own words rather
-    than a status field a tool maintained about them; that is the reading
-    rule `references/agent-boundaries.md` states, and it is not mechanical."""
-    missing = _USER_RECORD_REQUIRED - set(claim)
-    if missing:
+def _check_user_record_claim(claim, label, user_statements):
+    """A quote from the user's own written record (#844; the module docstring's
+    design note owns the rationale). The citation core is a public fact's,
+    and case 8 runs in this direction too: what the user said in this
+    conversation is a statement, not a dated note they wrote earlier."""
+    _check_sourced_claim(claim, label, "user_record")
+    if _restates_a_user_statement(claim["claim"], user_statements):
         raise AnswerProvenanceError(
-            f"{label} is labelled user_record but is missing {', '.join(sorted(missing))}")
-    extra = set(claim) - _USER_RECORD_REQUIRED
-    if extra:
-        raise AnswerProvenanceError(
-            f"{label} (user_record) carries fields it must not: {sorted(extra)}")
-    source = claim.get("source")
-    if not isinstance(source, str) or not source.strip():
-        raise AnswerProvenanceError(
-            f"{label}.source must name the note the record was read from")
-    as_of = claim.get("as_of")
-    if not isinstance(as_of, str):
-        raise AnswerProvenanceError(f"{label}.as_of must be an ISO date (YYYY-MM-DD)")
-    try:
-        dt.date.fromisoformat(as_of.strip())
-    except ValueError:
-        raise AnswerProvenanceError(f"{label}.as_of is not an ISO date: {as_of!r}")
+            f"{label} restates what the user said now as user_record; a statement made in "
+            "this conversation is not a dated written note, and dressing it as one invents "
+            "the record")
 
 
 def _check_agent_judgment_claim(claim, label):
@@ -639,7 +643,7 @@ def _check_claim(claim, section, index, record, user_statements):
         _check_public_fact_claim(claim, label, user_statements)
         return None
     if provenance == "user_record":
-        _check_user_record_claim(claim, label)
+        _check_user_record_claim(claim, label, user_statements)
         return None
     _check_agent_judgment_claim(claim, label)
     return None

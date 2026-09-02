@@ -380,8 +380,8 @@ exists and why it is not the rule itself. Reading the flag as the rule is what
 left the default `consider` path with no provenance discipline at all — the
 #823 diagnosis.
 
-The label is a register, not a syntax. "Your record says", "that is my read",
-"per the filing" all satisfy C1; a taxonomy printed at the user is C4.
+The label is a register, not a syntax. "Your record says", "you wrote on the
+30th that", "that is my read", "per the filing" all satisfy C1; a taxonomy printed at the user is C4.
 
 ### C2 — a public fact carries its source and its date, inline and minimal
 

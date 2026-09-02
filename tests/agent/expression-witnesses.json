@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "privacy": "synthetic_only",
-  "comment": "Exemplars for docs/expression-contract.md. #832 made this corpus the binding statement of the answer pyramid (§3): three to five canonical exemplars per conversational surface, each declaring the one-sentence answer it leads with (`core`) and the increment each of its blocks adds (`blocks[].adds`), plus counter-exemplars for the four named bans. #825 retired the formatting-only E-1 through E-4; placement, markers and answer length still vary freely. #830 added E-6 and the owner's three approved acceptance templates. #836 adds a research-depth upper witness without reinstating a length cap. #844 puts the user's own written record on the consider generation path (consider_three_way_user_record replaces the D4-only clearance scene). Every scene is invented, nothing is derived from a real user record — the notes some scenes quote are made up with the issuers — and all issuers and sources are fictional (Widgetron WDGT, Gridcore GRDC, Fabrion FABR, ACME, Northstar Ratings).",
+  "comment": "Exemplars for docs/expression-contract.md. #832 made this corpus the binding statement of the answer pyramid (§3): three to five canonical exemplars per conversational surface, each declaring the one-sentence answer it leads with (`core`) and the increment each of its blocks adds (`blocks[].adds`), plus counter-exemplars for the four named bans. #825 retired the formatting-only E-1 through E-4; placement, markers and answer length still vary freely. #830 added E-6 and the owner's three approved acceptance templates. #836 adds a research-depth upper witness without reinstating a length cap. #844 revises consider_three_way_comparison in place so its deciding reason is the user's own written record; the pre-#844 text is in git history. Every scene is invented, nothing is derived from a real user record — the notes some scenes quote are made up with the issuers — and all issuers and sources are fictional (Widgetron WDGT, Gridcore GRDC, Fabrion FABR, ACME, Northstar Ratings).",
   "surfaces": {
     "consider": "The deterministic portfolio-consequence route (references/trade-consequence.md).",
     "no_book": "A live decision with no recorded book (references/decision-framing.md).",
@@ -49,7 +49,28 @@
       "answer": "Do not add to ACME. On your recorded book, priced on cost rather than current market value, this buy moves it from 30% to about 38%, widening a position already past your own limit. Because that book is 45 days old, I would revisit the call only if current prices materially change the concentration picture. Nothing has been executed."
     },
     {
-      "id": "consider_three_way_user_record",
+      "id": "consider_no_material_change",
+      "surface": "consider",
+      "kind": "positive",
+      "covers": [
+        "D4"
+      ],
+      "note": "An answer whose numbers carry no triggered limitation ends at its last judgment. The absence of an end block is the rule working, not an omission.",
+      "core": "Your own rule caps a single name at 20%, and this buy leaves ACME at 12%, so nothing you wrote collides with it.",
+      "blocks": [
+        {
+          "text": "Your own rule caps a single name at 20%, and this buy leaves ACME at 12%, so nothing you wrote collides with it.",
+          "adds": "the clearance, measured against the user's own cap"
+        },
+        {
+          "text": "Your call — nothing has been executed.",
+          "adds": "the execution status"
+        }
+      ],
+      "answer": "Your own rule caps a single name at 20%, and this buy leaves ACME at 12%, so nothing you wrote collides with it.\n\nYour call — nothing has been executed."
+    },
+    {
+      "id": "consider_three_way_comparison",
       "surface": "consider",
       "kind": "positive",
       "covers": [
@@ -60,7 +81,7 @@
         "C1",
         "C2"
       ],
-      "note": "#844: the owner-approved comparison (consider_three_way_comparison) with its deciding reason drawn from the user's own written record. The stance opens it; what decides is a condition the user wrote and stances they recorded, each quoted as theirs with the note's date; the engine's consequence is the check on the pick, not the lead; the counter-side is the one line that could overturn it; the end block adds the date the notes were read. Every note quoted here is invented with the issuers.",
+      "note": "#830 acceptance template 1, owner-approved; revised in place under #844 (owner ruling 2026-09-02) so the deciding reason is drawn from the user's own written record — a condition the user wrote and stances they recorded, each quoted as theirs with the note's date — while the engine's consequence is the check on the pick, not the lead. The #830 shape is unchanged: the stance opens it, the counter-side exists only as the one line that could overturn the pick, and the book date, the price session, the date the notes were read, the cash used and the unchecked valuation gap are one end block of one line each, never narrated twice. The pre-#844 text (deciding reason: event risk alone) is in git history. Every note quoted here is invented with the issuers.",
       "core": "三個裡我會選 GRDC 加 15 股。",
       "blocks": [
         {
@@ -97,52 +118,6 @@
         }
       ],
       "answer": "三個裡我會選 GRDC 加 15 股。決定性理由是你自己寫的：7/30 你在 GRDC 的筆記裡把加碼條件定為「主業季增速守住 +50%」，上季 +82%（公司財報，2026-07-30）剛跨過去；WDGT 你 8/1 記了「財報前不加最大倉」，六天後就是財報（公司財報行事曆，2026-08-14）；FABR 你 7/22 的結論是「這個規模改變不了結果」，18 股只佔 1.2%，還是同一件事。帳上的檢查沒有反對：三案對組合的影響都在一個百分點內，誰都不改變你的集中度。\n\n反面就一條：前三大會從 51.3% 升到 51.9%（GRDC 本來就是第二大）——嫌集中的話這是三案共同的問題，答案是減碼不是選誰。\n會讓我改口：你本來就想賭財報超預期——那 WDGT 反而是最直接的表達，但要先撤掉你 8/1 那條。\n\n（帳本 8/14、價格 8/14 收盤；你的筆記讀到 8/14；三案動用 $4.4K／$5.1K／$4.9K；估值未評）"
-    },
-    {
-      "id": "consider_three_way_comparison",
-      "surface": "consider",
-      "kind": "positive",
-      "covers": [
-        "D1",
-        "D2",
-        "D4",
-        "D7",
-        "C1",
-        "C2"
-      ],
-      "note": "#830 acceptance template 1, owner-approved. The same call produced roughly 2,300 characters under the whitelist era. The stance opens it, the deciding reason is event risk rather than a concentration sermon, the counter-side exists only as the one line that could overturn the pick, and the book date, the price session and the unchecked valuation gap are one end block of one line each — never narrated twice.",
-      "core": "三個裡我會選 GRDC 加 15 股。",
-      "blocks": [
-        {
-          "text": "三個裡我會選 GRDC 加 15 股。",
-          "adds": "the stance: which candidate, and at what size"
-        },
-        {
-          "text": "三案對組合的影響都在一個百分點內",
-          "adds": "that book impact does not separate the three"
-        },
-        {
-          "text": "WDGT 六天後出財報、預期已拉滿",
-          "adds": "the event risk that does separate them"
-        },
-        {
-          "text": "FABR 18 股只佔 1.2%",
-          "adds": "why the third candidate cannot move the result at that size"
-        },
-        {
-          "text": "反面就一條：前三大會從 51.3% 升到 51.9%",
-          "adds": "the counter-side, and that it is common to all three"
-        },
-        {
-          "text": "會讓我改口：你本來就想賭財報超預期",
-          "adds": "the falsifier that would reverse the ranking"
-        },
-        {
-          "text": "（帳本 8/14、價格 8/14 收盤；三案動用 $4.4K／$5.1K／$4.9K；估值未評）",
-          "adds": "the caliber block: book date, price session, cash used, the gap not evaluated"
-        }
-      ],
-      "answer": "三個裡我會選 GRDC 加 15 股。決定性理由：三案對組合的影響都在一個百分點內——誰都不改變你的集中度——真正有差的只有事件風險：WDGT 六天後出財報、預期已拉滿（公司財報行事曆，2026-08-14），這時把最大倉再加大，是三案裡波動最大的；FABR 18 股只佔 1.2%，公司再好這個大小也改變不了結果。GRDC 下次財報在十月底，中間乾淨，上季主業 +82%（公司財報，2026-07-30）撐著。\n\n反面就一條：前三大會從 51.3% 升到 51.9%（GRDC 本來就是第二大）——嫌集中的話這是三案共同的問題，答案是減碼不是選誰。\n會讓我改口：你本來就想賭財報超預期——那 WDGT 反而是最直接的表達，排序整個反過來。\n\n（帳本 8/14、價格 8/14 收盤；三案動用 $4.4K／$5.1K／$4.9K；估值未評）"
     },
     {
       "id": "consider_recorded_consideration",

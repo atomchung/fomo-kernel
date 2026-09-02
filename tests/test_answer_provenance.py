@@ -565,6 +565,28 @@ def test_user_record_claim_matches_the_schemas_declared_shape():
     assert "#/$defs/userRecordClaim" in refs, "the schema's claim union does not admit the fourth class"
 
 
+def test_user_statement_promoted_to_user_record_is_rejected():
+    """Case 8 in the other direction: the user's words from this conversation
+    may not be dressed as a dated note they wrote earlier."""
+    statement = "I want to buy because my neighbor said NVDA will 10x."
+    case = _valid_case()
+    case["for"].append(_user_record_claim(claim=statement))
+    _rejects("restates what the user said now as user_record", case, user_statements=[statement])
+
+
+def test_as_of_must_match_the_schemas_date_shape_exactly():
+    """`date.fromisoformat` alone accepts these on Python 3.11+; the schema's
+    pattern does not, and the gate follows the schema -- for both citing classes."""
+    for as_of in ("20260730", "2026-W01-1", " 2026-07-30 "):
+        case = _valid_case()
+        case["for"].append(_user_record_claim(as_of=as_of))
+        _rejects("as_of is not an ISO date", case)
+        case = _valid_case()
+        case["against"].append({"claim": "Reuters reported new export curbs on AI chips.",
+                                "provenance": "public_fact", "source": "Reuters", "as_of": as_of})
+        _rejects("as_of is not an ISO date", case)
+
+
 def test_the_recommendation_itself_may_not_be_a_user_record():
     """The stance is the agent's. Quoting the user's own note as the
     recommendation would hand their words back to them as advice."""

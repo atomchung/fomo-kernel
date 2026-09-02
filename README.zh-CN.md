@@ -7,7 +7,7 @@
 
 [English](README.md) · [繁體中文](README.zh-TW.md) · **简体中文**
 
-> **一个直接、以证据为边界、在本地运行的交易决策伙伴。** 把你正在面对的决策，或已经做过的交易带进来。FOMO Kernel 可以推荐与排序有限候选，同时忠实保留组合事实与执行状态。
+> **一个直接、以证据为边界、在本地、在你自己的投资文件夹里运行的交易决策伙伴。** 把你正在面对的决策，或已经做过的交易带进来。FOMO Kernel 会先读你已经写下的东西，可以推荐与排序有限候选，同时忠实保留组合事实与执行状态。
 
 你通过 Claude Code 这类 AI coding agent 使用它，它只根据你交给它的持仓与交易记录运作。你的数据留在你自己的机器上。
 
@@ -121,12 +121,10 @@ pip install -r skills/fomo-kernel/requirements.txt
 python3 skills/fomo-kernel/engine/review.py doctor
 FOMO_KERNEL="$(pwd)"
 
-cd ~/path/to/your/investing/folder
-mkdir -p .claude/skills
-ln -s "$FOMO_KERNEL/skills/fomo-kernel" .claude/skills/fomo-kernel
+cd ~/path/to/your/investing/folder && mkdir -p .claude/skills && ln -sfn "$FOMO_KERNEL/skills/fomo-kernel" .claude/skills/fomo-kernel
 ```
 
-请在你的投资文件夹里、已启用虚拟环境的终端启动 Claude Code。装在那里，skill 会先读你已经写下的东西——你对这只标的的 thesis、失效条件、开放问题、先前的决定——以你的记录引用，再给建议；引擎算出的组合影响则用来检查这个选择。工具替你维护的状态字段会被当成工具的注记，不当成你的信念，而且不会写回任何东西。若你没有这样的文件夹，改 symlink 到 `~/.claude/skills`，答案就只靠记录的账本和有来源的研究。
+最后一行换成你自己的文件夹路径；文件夹不存在会停下来，重跑也安全。请在你的投资文件夹里、已启用虚拟环境的终端启动 Claude Code。装在那里，skill 会先读你已经写下的东西——你对这只标的的 thesis、失效条件、开放问题、先前的决定——以你的记录引用，再给建议；引擎算出的组合影响则用来检查这个选择。工具替你维护的状态字段会被当成工具的注记，不当成你的信念，而且不会写回任何东西。若你没有这样的文件夹，改 symlink 到 `~/.claude/skills`，答案就只靠记录的账本和有来源的研究。
 
 ### 2. 带入一个真实决策，或一份真实记录
 
@@ -239,7 +237,7 @@ FOMO Kernel 不会：
 - 声称候选探索已穷尽整个市场；
 - 替你做出或执行最后买卖决定；
 - 变成券商、财富管理或完整 investment OS；
-- 把你的笔记文件夹复制进引擎或任何地方——agent 只在原地读你写的东西，并以你的记录引用；
+- 把你的笔记文件夹复制进引擎或任何地方；
 - 用捏造的组合数字替代缺失的组合事实。
 
 它是研究与决策教练工具，不是投资建议。所有投资决定与结果仍由你负责。

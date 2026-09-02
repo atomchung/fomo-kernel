@@ -11,12 +11,12 @@ price session, the date the notes were read and the unevaluated valuation gap
 as one end block. Read it before writing one.
 
 It is copied verbatim from `tests/agent/expression-witnesses.json`, scene
-`consider_three_way_user_record` — the corpus that
+`consider_three_way_comparison` — the corpus that
 §3.5 of the repository's expression contract (`docs/expression-contract.md`) makes the
 binding statement of this shape. Every issuer and every note in it is invented,
 and `tests/test_expression_contract.py` fails if the two copies disagree.
 
-```exemplar consider_three_way_user_record
+```exemplar consider_three_way_comparison
 三個裡我會選 GRDC 加 15 股。決定性理由是你自己寫的：7/30 你在 GRDC 的筆記裡把加碼條件定為「主業季增速守住 +50%」，上季 +82%（公司財報，2026-07-30）剛跨過去；WDGT 你 8/1 記了「財報前不加最大倉」，六天後就是財報（公司財報行事曆，2026-08-14）；FABR 你 7/22 的結論是「這個規模改變不了結果」，18 股只佔 1.2%，還是同一件事。帳上的檢查沒有反對：三案對組合的影響都在一個百分點內，誰都不改變你的集中度。
 
 反面就一條：前三大會從 51.3% 升到 51.9%（GRDC 本來就是第二大）——嫌集中的話這是三案共同的問題，答案是減碼不是選誰。
@@ -521,7 +521,7 @@ You may optionally structure this case with `--agent-case`, a path to a JSON fil
   "support": [
     {"claim": "This grows NVDA to 64% of the book.", "provenance": "engine_fact", "anchor": "consequence.after.max_pct"},
     {"claim": "This is priced on cost, not a live market value, so the weight above may be off.", "provenance": "engine_fact", "anchor": "consequence.disclosures.0"},
-    {"claim": "The record is several days stale.", "provenance": "engine_fact", "anchor": "basis.stale_days"},
+    {"claim": "The record is 5 days stale.", "provenance": "engine_fact", "anchor": "basis.stale_days"},
     {"claim": "The stock trades at a much higher earnings multiple than when you first bought it.", "provenance": "public_fact", "source": "Market data provider", "as_of": "2026-07-20"},
     {"claim": "Your own note sets the add condition for this name at core growth holding above 50%, and this quarter it did not.", "provenance": "user_record", "source": "notes/NVDA.md", "as_of": "2026-07-30"}
   ],
