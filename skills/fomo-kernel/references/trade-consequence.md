@@ -477,7 +477,7 @@ The floor did not move: the same rule effect, the same verbatim quote, the same 
 
 ## The recommendation case
 
-The engine states the consequence and rule collisions. Read what the user already wrote about the names in play before arguing the case (`SKILL.md`, "The user's own record comes first"): a condition they set, a stance they recorded, a prior decision, may be the reason that decides, and the consequence then checks the pick. Recommend what to do, then support it from their record, the engine's output and relevant sourced evidence. Include a counter-case only when it could change the action.
+The engine states the consequence and rule collisions. Read what the user already wrote about the names in play before arguing the case (`SKILL.md`, "The user's own record comes first"): a condition they set, a stance they recorded, a prior decision, may be the reason that decides, and the consequence then checks the pick. Recommend what to do, then support it from their record, the engine's output and relevant sourced evidence. Include a counter-case when it could change the action, how far the user should trust it, or which of the alternatives in play wins — the expression contract's amended increment gate (§3), not a symmetry requirement and not a section.
 
 Every claim you add carries its own label: state your record says (drawn straight from `before`/`after`/`delta`/`rule_collisions`), the user's own written record (quoted from their note, with the note and its date), a public fact (something you looked up, sourced), or your own judgment. Do not blend them into one unlabeled sentence, and never hand the user's own words back to them under another label. When and how to look something up at all — the standing position packet, the event-lookup triggers, the neutral query, the stop discipline — is [market-lookup.md](market-lookup.md)'s contract.
 
@@ -564,7 +564,28 @@ There is no obligation to call `--resolve`, and no review step depends on it. Do
 
 ## What a later review does with an unresolved one
 
-An evaluation left at `decision: "open"` does not go silent. The next `prepare` reconciles it against the transaction record and carries the result in the Review Plan's `evaluation_reconciliation` — a `matched` entry names the date and quantity of a trade found for that ticker and side between the evaluation's `created` day and the review's own close; `unmatched` means none was found. This is a fact about the record, never a claim about cause: `matched` is evidence a qualifying trade happened, not evidence the user made it *because of* the evaluation, and a review never writes `decision` — that stays the user's own word, set only through `--resolve` above. Raise a surfaced evaluation the same way any other supplied fact earns a turn: judge whether it is the relevant thing to say in this scene, not an automatic prompt.
+An evaluation left at `decision: "open"` does not go silent, on either route.
+
+On this one it reaches the next consultation of the same ticker as `unresolved_prior` (#827) — the ticker, the direction, the day they asked, the `evaluation_id` that can settle it, and their own stored `reason` and `why_now` when both were supplied:
+
+```json
+{
+  "evaluation_id": "eval-...",
+  "ticker": "NVDA",
+  "side": "buy",
+  "asked_on": "2026-03-04",
+  "reason": "It is still my highest-conviction name and the build-out has room to run.",
+  "why_now": "Their main supplier raised capacity guidance this morning."
+}
+```
+
+At most one reaches you, on the same eligibility and the same side preference `prior_decision` uses below, with two differences that are the point of the field. **It carries no `decision` and no `decided_on`**, because neither exists: an open row is a question that was asked, never a decision and never proof of one, and there is deliberately no key here a reader could mistake for an answer the user never gave. And **a row with no stored context is still recalled**, where the resolved projection drops it — the payload here *is* the open question, and the ticker, the direction, the day and the id are on any stored row.
+
+Its one use is to ask what they did, once, when they have not already said — never a history recap, and never a sentence spent on "you have asked about this before". Their answer goes back through `--resolve`, which is what turns this row into next time's `prior_decision`; nothing else writes `decision`. Until then it is not memory of an action, and an unsettled discussion is not evidence a trade happened.
+
+It exists because the loop was mechanically open, not merely unused: `--resolve` needs an `evaluation_id`, and until this the only place one was ever emitted was the response that minted it. A user who considered a name, said nothing, and came back weeks later reached an answer that could not see the open question and could not have settled it even if they volunteered the answer.
+
+On the review route the next `prepare` reconciles the same row against the transaction record and carries the result in the Review Plan's `evaluation_reconciliation` — a `matched` entry names the date and quantity of a trade found for that ticker and side between the evaluation's `created` day and the review's own close; `unmatched` means none was found. This is a fact about the record, never a claim about cause: `matched` is evidence a qualifying trade happened, not evidence the user made it *because of* the evaluation, and a review never writes `decision` — that stays the user's own word, set only through `--resolve` above. Raise a surfaced evaluation the same way any other supplied fact earns a turn: judge whether it is the relevant thing to say in this scene, not an automatic prompt.
 
 ## What a later consideration does with a resolved one (#609)
 
@@ -583,7 +604,7 @@ The mirror image of the section above. When the user asks about a ticker they ha
 }
 ```
 
-At most one reaches you, and only when all of these hold: the same ticker, a different evaluation than this one, a complete stored `reason` and `why_now`, a resolved `decision`, and a canonical `decided_on`. The newest eligible same-side prior wins; only when there is none does the newest eligible opposite-side one take its place. An `open` evaluation is unresolved and never appears here — that one goes through the reconciliation above instead. When nothing is eligible the field is simply absent, which is why there is no empty case to write around.
+At most one reaches you, and only when all of these hold: the same ticker, a different evaluation than this one, a complete stored `reason` and `why_now`, a resolved `decision`, and a canonical `decided_on`. The newest eligible same-side prior wins; only when there is none does the newest eligible opposite-side one take its place. An `open` evaluation never appears here — `decision` is what decides which of the two projections a row belongs to, so no consultation can arrive as both. When nothing is eligible the field is simply absent, which is why there is no empty case to write around.
 
 It is a read projection of another stored row, not a new record. It changes no number, no `rule_effect`, no `evaluation_id`, and nothing is written because of it.
 

@@ -122,10 +122,29 @@ spent the only position the reader is guaranteed to read.
 **The middle is gated by increment.** Every block must add a NEW
 decision-relevant fact or judgment. The test is not "is this true" and not "is
 this owed" — under the whitelist era everything printed was both. The test is:
-**delete this block; does the decision change?** If it does not, the block is
-not shortened, it is deleted. Blocks that survive the gate have no cap, and
-this is deliberately not a length rule: an answer that genuinely needs six
-increments gets six.
+**delete this block; can the reader still take the call, judge how far to
+trust it, and see why it beat the alternative they were weighing?** If nothing
+is lost on any of those three, the block is not shortened, it is deleted.
+Blocks that survive the gate have no cap, and this is deliberately not a length
+rule: an answer that genuinely needs six increments gets six.
+
+Owner amendment, 2026-09-05 (§8, and [#827](https://github.com/atomchung/fomo-kernel/issues/827)).
+The gate read **"does the decision change?"** until this ruling, which is one
+clause narrower than the shape it was written for. A block that lets the reader
+check the call, or that says what makes this pick better than the one they came
+in holding, does not flip the action — so the literal test deleted it, and the
+answer kept its stance while losing the reason anyone could weigh. The three
+failures the amendment names are observed, not hypothetical: a stance the
+reader cannot check, an answer that never engages the reason they were buying,
+and a better candidate named with nothing said about what makes it better.
+
+The bans below did not move, and the amendment is not a volume licence.
+Support that restates, hedges, explains a system default, or invents a scenario
+adds nothing on any of the three and is still deleted. **Confidence is not a
+hedge** — it is stated as the threshold that would change the call (§3.2), so a
+block earning its place on the second clause carries a number or a condition,
+never an adverb. **Comparison is not a survey** — it is the one alternative the
+user is actually choosing against, not a tour of the field.
 
 **Four named bans.** Each was observed live in the #827 or #830 runs, each
 survived every rule then on the books, and each is a way for a block to add
@@ -154,6 +173,17 @@ exemplar corpus references it by (§3.5):
   prose and then again as a bullet, a table row, or a summary line. Restating
   is not emphasis; it is the reader paying twice for one increment. This is
   D6/D7 seen from the shape side.
+
+**A stance to wait names what it is waiting for.** Owner amendment, 2026-09-05
+(§8). *Delay* and *collect evidence* are answers like any other, and they owe
+what a directional call owes in its falsifier: the specific evidence that would
+settle the question, and the next point at which it can actually be checked. A
+scheduled date is not that reason — an earnings date exists on every name every
+quarter, and naming one without saying which figure in it decides the call is a
+wait with no end. Where no verified checkpoint exists, say the trigger is a
+condition rather than a date, and say which condition. An answer that
+recommends waiting and names neither has withheld the decision rather than made
+one.
 
 **The bottom floor is a door, not a section.** The route still computes
 everything, and the user may ask for any of it at any moment. The answer says
@@ -477,4 +507,5 @@ letting a green suite read as a governed output.
 | 2026-08-14 | Line cap set at five (D5) from a measured four-line worst case, with merging — never dropping — as the remedy, so a cap can never become an argument for omitting an owed fact. |
 | 2026-08-19 | Issue #825 retires the product-wide block, prefix, and line-cap template plus E-1–E-4. Those checks proved formatting, not whether a limitation mattered. The review card keeps its footnote as local layout; conversational surfaces use relevance-driven placement. |
 | 2026-08-20 | Owner ruling ([#830](https://github.com/atomchung/fomo-kernel/issues/830)): the product is too verbose, and the fix is deletion rather than a reading budget — anything whose must-have reason cannot be stated is cut. `consider`'s obligation list splits into owed / available / never-rendered, and D7 makes volume *distribution* expression's business, which §2 had disclaimed and nothing else had claimed. The reading-budget rule proposed as V10 is demoted to a backstop and is not adopted here: a length cap is what #827 had just deleted, and re-adding one would have priced the symptom instead of removing the cause. |
+| 2026-09-05 | Owner amendment ([#827](https://github.com/atomchung/fomo-kernel/issues/827), through §3.4's first lane): §3's increment gate widens from *does the decision change* to **the action, the confidence in it, or the comparison against the alternative in play**, and a *wait* stance owes what it is waiting for plus the next checkable point. Both are amendments to the mother chapter rather than new IDs, which is what §3.4 requires of a shape fix. The narrow gate deleted support that let the reader check a call or see why one candidate beat another — neither flips the action, and both are what the owner's blind cases asked for. The four bans, D1–D7, C1–C4, the registry freeze and the standing refusal of any character-count ceiling are unchanged, and neither amendment licenses a fact the route did not owe: a block still has to earn one of the three. |
 | 2026-08-21 | Owner ruling ([#832](https://github.com/atomchung/fomo-kernel/issues/832)): **one communication method.** §3 becomes the mother law — one pyramid, mandatory on every surface — and the five independent local phrasings of answer-first (the card keynote, V1, SKILL.md's reader-order paragraph, `decision-framing.md`'s bounded-value lead, `weekly-market-read.md`'s value-first, plus `trade-consequence.md`'s reader-question-chain section, the sixth the audit found) are replaced by derivation references. Derivation is **additive only** and an empty derivation is the default. The increment gate and four named bans are encoded; V/D/C take no new IDs for a shape or length concern, so a future style fix is either an owner amendment to §3 or an exemplar — never a sixth phrasing with an ID on it. The card's structure is unchanged: it is the document incarnation of the same pyramid. Deliberately **not** adopted, again: any character-count cap (#543's ceiling, deleted by #827, stays deleted) — the shape is positive, and length is its consequence rather than its rule. Integrity gates (engine-owned numbers, provenance, canonical writes, execution truth, privacy) are untouched, and the #829 unselected-write finding stays open and out of scope. |

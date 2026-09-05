@@ -5020,8 +5020,17 @@ def test_s7_the_instruction_surface_states_report_not_proof():
     assert ("Use `prior_decision` only when it changes the current lead judgment, evidence "
             "requirement, process action, or a decision-changing question; otherwise ignore "
             "it.") in line, line
-    assert "recap" not in skill.lower(), (
-        "#609 adds one rule, not a mandatory history paragraph")
+    # #827 narrowed this from a whole-file ban on the word. What it guards is a
+    # rule that *produces* a history paragraph; the contract now bans one
+    # outright on two fields, and a blanket substring gate cannot tell a
+    # prohibition from an instruction. Every mention must be a prohibition, so
+    # an instruction to write one still reddens.
+    for entry in skill.splitlines():
+        if "recap" not in entry.lower():
+            continue
+        assert "never" in entry.lower(), (
+            "#609 adds one rule, not a mandatory history paragraph; a mention "
+            f"of a recap that is not a prohibition is that paragraph: {entry}")
 
 
 # ── S8. corrupt or unreadable candidates ──
@@ -5217,6 +5226,355 @@ def test_a_legacy_row_stays_readable_and_resolvable_while_being_ineligible():
         # and now that it is resolved it is still ineligible -- for the missing
         # context, which is the only thing that was ever wrong with it
         assert "prior_decision" not in _consider_now(tmp)
+
+
+# ───── R. unresolved_prior — one open same-ticker consultation (#827) ─────
+#
+# Section Q's complement, and the other half of the same loop. Q proves which
+# *settled* consultation reaches the agent; this proves which *unsettled* one
+# does, and why one had to. `--resolve` needs an `evaluation_id` and the only
+# place one was ever emitted is the response that minted it, so before this a
+# user who considered a ticker and said nothing reached an agent that could not
+# see the open question and could not have settled it if they had volunteered
+# the answer -- leaving the row open forever and `prior_decision` permanently
+# empty for that ticker. `_evaluation_reconciliation` reads the same rows but
+# only from `_build_plan`, so it belongs to the periodic review and a user who
+# never runs one never reaches it.
+#
+# Same fixture strategy as Q: every row is minted through the real CLI and then
+# varied only in the fields a stored history actually varies in. All text is
+# fictional (AGENTS.md boundary 4).
+
+def _open_prior(template, evaluation_id, *, created=None, context=_UNSET):
+    """A stored *unsettled* prior. `decided_on` is None because an open row has
+    no resolution date to carry, and `created` is overridable because it is
+    both this reader's sort key and its one projected date."""
+    row = _prior(template, evaluation_id, decision="open", decided_on=None,
+                 context=context)
+    if created is not None:
+        row["created"] = created
+    return row
+
+
+# ── R1. no eligible open prior ──
+
+def test_r1_an_empty_history_omits_unresolved_prior():
+    with tempfile.TemporaryDirectory() as tmp:
+        payload = _consider_now(tmp)
+        assert "unresolved_prior" not in payload, (
+            "absent means nothing is open -- never a null, so no reader has to "
+            "tell an empty recall from an unasked one")
+
+
+def test_r1_an_open_prior_on_another_ticker_is_not_recalled():
+    with tempfile.TemporaryDirectory() as tmp:
+        other = _mint_prior_template(tmp, ticker="AMD")
+        _seed_evaluations(tmp, [_open_prior(other, "eval-otheropen000001")])
+        assert "unresolved_prior" not in _consider_now(tmp)
+
+
+# ── R2. the open same-side prior, and what it projects ──
+
+def test_r2_the_open_same_side_prior_is_projected_field_for_field():
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        _seed_evaluations(tmp, [_open_prior(template, "eval-open0000000001",
+                                            created="2026-01-05")])
+        projected = _consider_now(tmp)["unresolved_prior"]
+        assert projected == {"evaluation_id": "eval-open0000000001",
+                             "ticker": "NVDA", "side": "buy",
+                             "asked_on": "2026-01-05",
+                             "reason": _PRIOR_CONTEXT["reason"],
+                             "why_now": _PRIOR_CONTEXT["why_now"]}
+
+
+def test_r2_an_open_prior_carries_no_decision_field_at_all():
+    """The truth boundary this projection exists on the safe side of: an open
+    row is a question that was asked, never a decision and never proof of one.
+    A `decision`/`decided_on` key here -- even carrying "open" -- is a field a
+    reader could mistake for an answer the user never gave."""
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        _seed_evaluations(tmp, [_open_prior(template, "eval-open0000000001")])
+        projected = _consider_now(tmp)["unresolved_prior"]
+        for forbidden in ("decision", "decided_on", "evidence_refs"):
+            assert forbidden not in projected, forbidden
+
+
+def test_r2_an_open_prior_with_no_stored_context_is_still_recalled():
+    """The one deliberate eligibility difference from `prior_decision`. There a
+    half-stated recall of a settled decision is worse than silence; here the
+    payload *is* the open question -- ticker, direction, day, and the id that
+    can close it -- and every one of those is on any stored row."""
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        _seed_evaluations(tmp, [_open_prior(template, "eval-open0000000001",
+                                            created="2026-01-05", context=None)])
+        projected = _consider_now(tmp)["unresolved_prior"]
+        assert projected == {"evaluation_id": "eval-open0000000001",
+                             "ticker": "NVDA", "side": "buy",
+                             "asked_on": "2026-01-05"}
+
+
+def test_r2_half_a_context_is_omitted_rather_than_half_projected():
+    """The writer stores reason and why_now both-sides-or-nothing, so a row
+    carrying one of them is corrupt. The open question still stands; the
+    quotation does not."""
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        half = {"reason": _PRIOR_CONTEXT["reason"], "why_now": "  "}
+        _seed_evaluations(tmp, [_open_prior(template, "eval-open0000000001",
+                                            context=half)])
+        projected = _consider_now(tmp)["unresolved_prior"]
+        assert projected["evaluation_id"] == "eval-open0000000001"
+        assert "reason" not in projected and "why_now" not in projected
+
+
+def test_r2_the_canonical_ticker_is_projected_not_the_stored_spelling():
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        row = _open_prior(template, "eval-open0000000001")
+        row["premise"] = dict(row["premise"], ticker="nvda")
+        _seed_evaluations(tmp, [row])
+        assert _consider_now(tmp)["unresolved_prior"]["ticker"] == "NVDA"
+
+
+# ── R3. opposite-side fallback, same preference as the resolved reader ──
+
+def test_r3_an_opposite_side_open_prior_is_selected_only_when_no_same_side_one_exists():
+    with tempfile.TemporaryDirectory() as tmp:
+        sell = _mint_prior_template(tmp, side="sell")
+        _seed_evaluations(tmp, [_open_prior(sell, "eval-opensell000001")])
+        assert _consider_now(tmp)["unresolved_prior"]["side"] == "sell"
+
+
+def test_r3_a_newer_opposite_side_open_prior_never_beats_an_older_same_side_one():
+    with tempfile.TemporaryDirectory() as tmp:
+        buy = _mint_prior_template(tmp)
+        sell = _mint_prior_template(tmp, side="sell")
+        _seed_evaluations(tmp, [
+            _open_prior(buy, "eval-openbuy0000001", created="2026-01-05"),
+            _open_prior(sell, "eval-opensell000001", created="2026-06-30")])
+        projected = _consider_now(tmp)["unresolved_prior"]
+        assert projected["evaluation_id"] == "eval-openbuy0000001"
+        assert projected["side"] == "buy"
+
+
+# ── R4. the current call never recalls itself ──
+
+def test_r4_an_exact_retry_never_recalls_itself():
+    """A persistent retry converges on the id already on disk, and that row is
+    still open. Without the id exclusion the answer would ask the user what
+    they did about the question they are asking right now."""
+    with tempfile.TemporaryDirectory() as tmp:
+        first = _consider_now(tmp)
+        assert "unresolved_prior" not in first
+        repeat = _consider_now(tmp)
+        assert repeat["evaluation"]["evaluation_id"] == first["evaluation"]["evaluation_id"]
+        assert "unresolved_prior" not in repeat, (
+            "the row this call converged onto is the call itself")
+
+
+def test_r4_a_different_consultation_of_the_same_trade_is_recalled():
+    with tempfile.TemporaryDirectory() as tmp:
+        first = _consider_now(tmp, qty=4)
+        second = _consider_now(tmp, qty=9)
+        assert second["unresolved_prior"]["evaluation_id"] == \
+            first["evaluation"]["evaluation_id"]
+
+
+# ── R5. the two projections are disjoint, and drop rather than default ──
+
+def test_r5_a_resolved_prior_never_reaches_this_projection():
+    """The exact complement of S5's open-is-ineligible: `decision` decides which
+    of the two readers a row belongs to, so no consultation can arrive twice."""
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        _seed_evaluations(tmp, [_prior(template, "eval-settled00000001",
+                                       decision="acted", decided_on="2026-02-02")])
+        payload = _consider_now(tmp)
+        assert "unresolved_prior" not in payload
+        assert payload["prior_decision"]["evaluation_id"] == "eval-settled00000001"
+
+
+def test_r5_a_row_with_no_canonical_created_is_ineligible():
+    """`created` is this reader's sort key *and* its one projected date -- "you
+    asked on the 6th" is what makes the question askable -- so unlike the
+    resolved reader, where it only breaks a tie, a row without one is dropped
+    rather than ordered last."""
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        for broken in ("20260105", "2026-W01-1", "not-a-date", None, 20260105):
+            row = _open_prior(template, "eval-open0000000001")
+            row["created"] = broken
+            _seed_evaluations(tmp, [row])
+            assert "unresolved_prior" not in _consider_now(tmp), broken
+
+
+def test_r5_a_row_storing_an_unrecognized_side_is_skipped():
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        row = _open_prior(template, "eval-open0000000001")
+        row["premise"] = dict(row["premise"], side="hold")
+        _seed_evaluations(tmp, [row])
+        assert "unresolved_prior" not in _consider_now(tmp)
+
+
+# ── R6. multiple open priors, deterministic selection ──
+
+def test_r6_newest_created_wins_and_file_order_does_not_decide():
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        _seed_evaluations(tmp, [
+            _open_prior(template, "eval-openb000000001", created="2026-06-30"),
+            _open_prior(template, "eval-opena000000001", created="2026-01-05")])
+        assert _consider_now(tmp)["unresolved_prior"]["evaluation_id"] == \
+            "eval-openb000000001"
+
+
+def test_r6_identity_breaks_a_same_day_tie_so_the_order_is_total():
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        rows = [_open_prior(template, "eval-openaaaaaaaaa1", created="2026-03-03"),
+                _open_prior(template, "eval-openzzzzzzzzz1", created="2026-03-03")]
+        _seed_evaluations(tmp, rows)
+        first = _consider_now(tmp)["unresolved_prior"]["evaluation_id"]
+        _seed_evaluations(tmp, list(reversed(rows)))
+        assert _consider_now(tmp)["unresolved_prior"]["evaluation_id"] == first == \
+            "eval-openzzzzzzzzz1"
+
+
+def test_r6_at_most_one_open_prior_reaches_the_agent():
+    """A user with eighteen unsettled consultations is the observed case, and a
+    list of them is the history recap this projection exists not to be."""
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        _seed_evaluations(tmp, [
+            _open_prior(template, f"eval-open{index:012d}", created="2026-04-0%d" % index)
+            for index in range(1, 6)])
+        projected = _consider_now(tmp)["unresolved_prior"]
+        assert isinstance(projected, dict)
+        assert projected["evaluation_id"] == "eval-open000000000005"
+
+
+# ── R7. the loop actually closes ──
+
+def test_r7_resolving_the_recalled_row_moves_it_to_prior_decision():
+    """The whole point, end to end and through the real CLI: an open row is
+    recalled with the id that can settle it, `--resolve` settles it with that
+    id, and the next consultation of the same ticker sees a resolved decision
+    instead of an open question. Before this projection the middle step had no
+    input on this route."""
+    with tempfile.TemporaryDirectory() as tmp:
+        asked = _consider_now(tmp, qty=4)
+        evaluation_id = asked["evaluation"]["evaluation_id"]
+
+        recalled = _consider_now(tmp, qty=9)["unresolved_prior"]
+        assert recalled["evaluation_id"] == evaluation_id
+
+        _ok(_run("consider", "--root", tmp, "--resolve", recalled["evaluation_id"],
+                 "--decision", "acted"))
+
+        after = _consider_now(tmp, qty=11)
+        assert after["prior_decision"]["evaluation_id"] == evaluation_id
+        assert after["prior_decision"]["decision"] == "acted"
+        assert after.get("unresolved_prior", {}).get("evaluation_id") != evaluation_id, (
+            "a settled row must leave this projection the moment it is settled")
+
+
+# ── R8. corrupt or unreadable candidates ──
+
+def test_r8_a_corrupt_candidate_is_skipped_and_an_older_valid_row_still_wins():
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        good = _open_prior(template, "eval-opengood000001", created="2026-01-05")
+        broken = _open_prior(template, "eval-openbad0000001", created="2026-06-30")
+        broken["premise"] = "not an object"
+        _seed_evaluations(tmp, [good, broken])
+        assert _consider_now(tmp)["unresolved_prior"]["evaluation_id"] == \
+            "eval-opengood000001"
+
+
+def test_r8_a_row_whose_fields_are_the_wrong_type_is_skipped_not_raised():
+    """A corrupt historical row must cost the user their memory, never the
+    answer they are asking for right now."""
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        for mutate in (lambda row: row.update(evaluation_id=17),
+                       lambda row: row.update(premise=["NVDA"]),
+                       lambda row: row.update(context="a string"),
+                       lambda row: row.update(decision=None)):
+            row = _open_prior(template, "eval-open0000000001")
+            mutate(row)
+            _seed_evaluations(tmp, [row])
+            payload = _consider_now(tmp)
+            assert payload["status"] == "considered"
+
+
+# ── the compatibility claims this projection also owes ──
+
+def test_unresolved_prior_changes_no_number_identity_or_challenge():
+    """Same premise, same book, same day; one root carries an open history and
+    the other does not. The whole difference between the two responses is this
+    one key -- which is also the rollback proof."""
+    with tempfile.TemporaryDirectory() as bare, tempfile.TemporaryDirectory() as remembered:
+        template = _mint_prior_template(remembered)
+        _seed_evaluations(remembered, [_open_prior(template, "eval-open0000000001",
+                                                   created="2026-02-02")])
+        with_open = _consider_now(remembered)
+        without = _consider_now(bare)
+
+        assert "unresolved_prior" in with_open and "unresolved_prior" not in without
+        assert with_open["evaluation"]["evaluation_id"] == without["evaluation"]["evaluation_id"]
+        for field in ("consequence", "rule_collisions", "premise", "basis", "decision"):
+            assert with_open["evaluation"][field] == without["evaluation"][field], field
+        assert with_open["challenge"] == without["challenge"]
+
+        def _comparable(payload):
+            return {key: (value["status"] if key == "append" else value)
+                    for key, value in payload.items()
+                    if key not in ("root", "unresolved_prior")}
+
+        assert _comparable(with_open) == _comparable(without)
+
+
+def test_unresolved_prior_is_never_stored_on_any_row():
+    with tempfile.TemporaryDirectory() as tmp:
+        template = _mint_prior_template(tmp)
+        _seed_evaluations(tmp, [_open_prior(template, "eval-open0000000001")])
+        payload = _consider_now(tmp)
+        assert "unresolved_prior" not in payload["evaluation"]
+        for row in _read_evaluations(tmp):
+            assert "unresolved_prior" not in row, row
+            _check_evaluation_shape(row)
+
+
+def test_an_ephemeral_call_still_recalls_without_joining_the_history():
+    """Exploration reads the loop and does not write to it (SKILL.md,
+    "Exploration leaves no canonical evaluation row")."""
+    with tempfile.TemporaryDirectory() as tmp:
+        premise = _collision_root(tmp)
+        asked = _ok(_run("consider", "--root", tmp, "--premise", premise))
+        before = pathlib.Path(_evaluation_path(tmp)).read_bytes()
+        payload = _ok(_run("consider", "--root", tmp, "--ephemeral", "--premise",
+                           json.dumps(dict(json.loads(premise), qty=7))))
+        assert payload["unresolved_prior"]["evaluation_id"] == \
+            asked["evaluation"]["evaluation_id"]
+        assert payload["append"]["status"] == "ephemeral"
+        assert pathlib.Path(_evaluation_path(tmp)).read_bytes() == before
+
+
+def test_the_instruction_surface_states_open_question_not_decision():
+    """The engine can only project the canonical value; that an open row is a
+    question and never an answer is instruction, and it has to be on the one
+    file an installed host is guaranteed to load."""
+    text = (ROOT / "skills" / "fomo-kernel" / "SKILL.md").read_text(encoding="utf-8")
+    assert "`unresolved_prior`" in text, (
+        "SKILL.md never names the field, so no installed host learns it exists")
+    line = next(one for one in text.splitlines() if "`unresolved_prior`" in one)
+    for required in ("never a decision", "--resolve"):
+        assert required in line, (
+            f"SKILL.md's unresolved_prior rule drops {required!r}")
 
 
 def _tests():

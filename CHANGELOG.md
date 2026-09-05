@@ -5,6 +5,64 @@ major version is `0`, a minor bump may change a contract.
 
 ## [Unreleased]
 
+### Limits moved onto the claim they protect (#827)
+
+- The always-on boundary file forbade "rankings" and "derived analysis" without
+  saying whose, and forbade arguing a considered trade from anything but
+  `consider`'s output — while the entry beside it mandates candidate ranking,
+  labelled judgment, and a deciding reason drawn from the user's own record.
+  Each prohibition is now scoped to the fact it protects: a *portfolio-derived*
+  number or ranking, a *portfolio* figure the engine did not emit, and a
+  considered trade's *portfolio consequence*. Comparing and ranking candidates
+  the user asked about is judgment, carries its label, and enters no canonical
+  state.
+- A risk the engine did not measure is named where the answer's own wording
+  would imply it was checked, or where it could change the recommendation.
+  That is a materiality test, never the enumeration #830 deleted.
+
+### An answer may support the reader's confidence, not only their action (#827)
+
+- The expression contract's increment gate asked whether deleting a block
+  changed the decision, which deleted the support that lets a reader check a
+  call or see why one candidate beat another. It now asks whether the reader
+  can still take the call, judge how far to trust it, and see why it beat the
+  alternative they were weighing. The four named bans are unchanged: restating,
+  hedging, explaining a default and inventing a scenario still add nothing.
+- A recommendation to wait now owes what a directional call owes in its
+  falsifier — the evidence that settles it and the next point it can be
+  checked. A scheduled date is not itself a reason to wait.
+- No character-count ceiling and no new registry ID: both amendments land in
+  the mother chapter, which is where the freeze says a shape fix goes.
+
+### The record read reaches standing rules, and keeps what bounds a quote (#844)
+
+- What is read now names the user's **standing decision rules** alongside the
+  per-name thesis, falsifiers, open questions, prior decisions and stances, and
+  says where to start: the names in play and those rules, then what they name —
+  not a sweep of the whole folder and not a filename convention.
+- A quote carries what bounds it. A condition keeps its threshold, a thesis its
+  falsifier, a stance whether it authorized acting yet; quoting a line the user
+  marked not-yet-actionable as an action basis is a misquote. Prefer their
+  newest statement, name a real conflict instead of silently picking a winner,
+  and argue any departure from their recorded preference from the evidence that
+  changed.
+
+### An unsettled consideration reaches the next one (#827)
+
+- `consider` may now return `unresolved_prior`: at most one earlier
+  consideration of the same ticker that was never settled — the direction, the
+  day it was asked, the user's own stored words when both were supplied, and
+  the `evaluation_id` that closes it. It carries no `decision` and no
+  `decided_on`, because an open row is a question that was asked, never a
+  decision and never proof of one.
+- Its one use is to ask what the user did, once, and only when they have not
+  already said. Their answer goes back through `consider --resolve`, which is
+  what makes it `prior_decision` next time. Until this the identifier
+  `--resolve` needs was emitted only in the response that minted it, so a
+  consideration left open on this route could never be closed on it.
+- Emitted beside the row, never stored on it, and absent rather than null. No
+  number, identity or obligation changes.
+
 ### The user's own record comes first (#844)
 
 - The skill is installed inside the user's investing folder and reads what they

@@ -7423,6 +7423,126 @@ def _prior_decision(root, ticker, side, current_evaluation_id):
     return None
 
 
+def _unresolved_prior(root, ticker, side, current_evaluation_id):
+    """At most one earlier *unsettled* consultation of the same ticker, so the
+    resolution beat has something to fire on (#827).
+
+    ``_prior_decision`` above is the other half of this pair and reads only
+    rows the user already answered. Nothing on the ``consider`` route read the
+    rows they never answered, and that is where the continuity loop was
+    mechanically open rather than merely unused. ``--resolve`` needs an
+    ``evaluation_id``, and the only place one was ever emitted is the response
+    to the consultation that minted it. A user who considered a ticker in
+    August, said nothing, and asks about it again in September therefore
+    reaches an agent that cannot see the open question *and could not settle it
+    even if the user volunteered the answer* -- so the row stays ``open``
+    forever and ``_prior_decision`` stays permanently empty for that ticker.
+    ``_evaluation_reconciliation`` reads the same rows, but only from
+    ``_build_plan``: it belongs to the periodic review, and a user who never
+    runs one never reaches it.
+
+    What this is not, and the distinction is the product's (AGENTS.md boundary
+    3): an open row is a question that was asked, never a decision, and never
+    evidence of one. It carries no ``decision`` and no ``decided_on`` because
+    neither exists yet, and the projection deliberately offers no field a
+    reader could mistake for either. Its whole use is to ask the user what they
+    did; their answer goes back through ``--resolve``, which is the only writer
+    of that field, and only then does the row become eligible as
+    ``prior_decision``.
+
+    Eligibility, each check dropping a row rather than repairing it, exactly as
+    the resolved reader does:
+
+    1. the same canonical ticker (``symbols.canonical_ticker``, #803), so a
+       premise written ``nvda`` recalls the open question about ``NVDA``;
+    2. a different ``evaluation_id`` than the current one -- a persistent retry
+       converges on the id already on disk, so without this the answer would
+       ask the user what they did about the question they are asking now;
+    3. ``decision`` still ``"open"``. This is the exact complement of
+       ``_prior_decision``'s ``PRIOR_DECISION_RESOLVED`` test, so no row can
+       ever reach both projections;
+    4. a canonical ``created`` date. Unlike the resolved reader, where
+       ``created`` is only a tie-break, here it is both the sort key and the
+       one projected date -- "you asked on the 6th" is the whole of what makes
+       the question askable -- so a row without one is dropped;
+    5. a recognized ``premise.side``, for the same reason the resolved reader
+       checks it: without it an unknown value falls into the opposite-side
+       bucket by default and is handed to the agent as the user's direction.
+
+    Context is *not* required, which is the one eligibility difference that is
+    a deliberate design call rather than an accident of the missing fields.
+    ``_prior_decision`` drops a row with no stored ``reason``/``why_now``
+    because a half-stated recall of a settled decision is worse than silence.
+    Here the recall's payload is the open question itself -- the ticker, the
+    direction, the day, and the id that can close it -- and every one of those
+    is present on any stored row. Their own words are projected when both are
+    there, on the same both-sides-or-nothing rule the writer applies
+    (``_validate_decision_context``), and simply omitted when they are not.
+
+    Selection: newest eligible same-side row, and only when there is none, the
+    newest eligible opposite-side one -- the resolved reader's own preference,
+    for the same reason. Within a bucket the order is
+    ``(created, evaluation_id)`` descending: ``created`` is the only time this
+    row carries, and identity stays last so the order is total rather than
+    resolving a same-day tie by hash. The key travels beside the projection
+    rather than inside it, so ordering may read what the agent is not shown.
+
+    Returns the projection dict, or ``None`` when nothing is eligible; the
+    caller omits the field entirely rather than emitting a null, so an absent
+    field means "nothing open", never "not looked at".
+
+    Read-only in the same strong sense as ``_prior_decision``: the caller runs
+    it after the frozen consequence, the rule collisions and the
+    ``evaluation_id`` exist, so nothing recalled can reach this call's
+    arithmetic, its rule effects, its identity, or the row it stores. Where the
+    two differ is what keeps the *current* consultation out of its own recall.
+    A settled row can never be the row this call just wrote, so
+    ``_prior_decision`` gets that for free from its own eligibility; an open
+    one is exactly what this call just wrote, so here check 2 is the whole
+    mechanism and the call's placement relative to the append is not part of
+    it."""
+    candidates = {"same": [], "opposite": []}
+    for row in _fold_evaluations(thesis.read_jsonl(_evaluation_path(root))).values():
+        # Type-checked before use for the reason ``_prior_decision`` states at
+        # length: ``thesis.read_jsonl`` proves a surviving line is a JSON
+        # object and nothing about what is inside it, and a corrupt historical
+        # row must cost the user their memory, never the answer they are
+        # asking for right now.
+        evaluation_id = row.get("evaluation_id")
+        if not isinstance(evaluation_id, str) or evaluation_id == current_evaluation_id:
+            continue
+        if row.get("decision") != "open":
+            continue
+        created = _canonical_iso_date(row.get("created"))
+        if created is None:
+            continue
+        premise = row.get("premise")
+        if not isinstance(premise, dict) or symbols.canonical_ticker(premise.get("ticker")) != ticker:
+            continue
+        prior_side = premise.get("side")
+        if prior_side not in consequence.SIDES:
+            continue
+        projection = {"evaluation_id": evaluation_id,
+                      # The canonical identity rather than the stored spelling,
+                      # matching ``_prior_decision``: a pre-#803 row that froze
+                      # ``nvda`` is still an open question about ``NVDA``.
+                      "ticker": ticker,
+                      "side": prior_side,
+                      "asked_on": created}
+        context = row.get("context")
+        if isinstance(context, dict):
+            reason, why_now = context.get("reason"), context.get("why_now")
+            if all(isinstance(text, str) and text.strip() for text in (reason, why_now)):
+                projection["reason"] = reason
+                projection["why_now"] = why_now
+        candidates["same" if prior_side == side else "opposite"].append(
+            ((created, evaluation_id), projection))
+    for bucket in ("same", "opposite"):
+        if candidates[bucket]:
+            return max(candidates[bucket], key=lambda item: item[0])[1]
+    return None
+
+
 def _evaluation_recall(root):
     """What the user already told us, in their own words, about a ticker.
 
@@ -8133,6 +8253,18 @@ def cmd_consider(args):
     # one, so an exact retry excludes the very row it converged onto.
     prior_decision = _prior_decision(root, premise_stored["ticker"],
                                      premise_stored["side"], row["evaluation_id"])
+    # #827, beside its resolved twin and after the same three things exist, so
+    # nothing recalled can reach this call's arithmetic, rule effects or
+    # identity. What keeps the current consultation out of its own recall is
+    # `row["evaluation_id"]` and only that: unlike `_prior_decision` above,
+    # whose subject is settled and so cannot be the row this call just wrote,
+    # this reader's subject is exactly the state the current row is in, and a
+    # retry converges on the id already on disk. Moving this line below the
+    # append changes no observable behaviour for that reason -- verified by
+    # mutation, and stated here rather than justified by a placement that is
+    # not what makes it safe.
+    unresolved_prior = _unresolved_prior(root, premise_stored["ticker"],
+                                         premise_stored["side"], row["evaluation_id"])
     # #810: `row` is rebound to what the record says, so a retry of an
     # evaluation the user already settled answers with that settlement rather
     # than presenting it back to them as still open.
@@ -8152,6 +8284,14 @@ def cmd_consider(args):
         # placeholder — so the absence is the fact and no reader has to tell an
         # empty recall from an unasked one.
         payload["prior_decision"] = prior_decision
+    if unresolved_prior is not None:
+        # Same posture as `prior_decision` directly above, and emitted beside
+        # it rather than instead of it: the two answer different questions --
+        # what the user decided last time, and what they never told us. A row
+        # can only ever satisfy one of them (`decision` is `open` for exactly
+        # one of the two readers), so there is no path by which the same
+        # consultation arrives twice.
+        payload["unresolved_prior"] = unresolved_prior
     sector_display = _consider_sector_display(consequence_stored, language)
     if sector_display:
         # #746. `max_sector` is a canonical engine label — `trade_recap.SECTOR_MAP`
