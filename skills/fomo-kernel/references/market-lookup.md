@@ -59,13 +59,22 @@ All lookup is skipped when:
 - the packet is already answered — do not keep searching past it;
 - the user asked not to browse, or the host has no browse capability: state the gap and ask for the source or the reason instead. Never invent, and never read "nothing found" as "no risk".
 
-Company research is in scope when an operating, valuation, event, or comparative
-fact could change the recommendation. When the user explicitly asks for
-candidate discovery, search a stated universe with stated filters and an as-of
-point. Report material exclusions and coverage limits, and never claim the
-search was exhaustive unless the evidence establishes that. A target or
-forecast remains model judgment with assumptions and uncertainty, never a
-public fact merely because a source published one.
+## What lookup is in scope for
+
+The gates above decide *when* to look, not *what may be looked at*. Company
+research is in scope when an operating, valuation, event, or comparative fact
+could change the recommendation, or how far the user should trust it, or which
+of the alternatives in play wins — the expression contract's increment gate
+(§3), the same test that decides whether the fact reaches the answer once it is
+found. When the user explicitly asks for candidate discovery, search a stated
+universe with stated filters and an as-of point. Report material exclusions and
+coverage limits, and never claim the search was exhaustive unless the evidence
+establishes that. A target or forecast remains model judgment with assumptions
+and uncertainty, never a public fact merely because a source published one.
+
+This paragraph sat under "When lookup does not happen" until #827 — a
+permission filed under the heading that says the opposite, which is the
+entry/reference ambiguity that issue exists to remove.
 
 ## The neutral query
 

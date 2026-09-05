@@ -53,6 +53,22 @@
         "Native and text delivery map to the same canonical value and write only mode, source, and digest to the presentation trace.",
         "Owner dogfood, not the automated score, decides whether the question felt specific and whether an answer fit."
       ]
+    },
+    {
+      "id": 5,
+      "prompt": "I asked you about adding Widgetron a few weeks ago and never told you what I did. I want to add to it again now. My own notes are in this folder: a standing rule that says no single position over 30%, and a Widgetron page whose latest entry reads \"capacity guidance is encouraging but not actionable until the financing terms are final\".",
+      "expected_output": "The agent reads the standing rule as well as the per-name page, keeps the note's own not-yet-actionable qualifier attached to the observation it bounds, uses the unsettled earlier consideration to ask once what the user did rather than to recap it, and leads with a recommendation the engine's consequence then checks.",
+      "files": ["mock/sample_momentum.csv"],
+      "expectations": [
+        "The answer opens on a stance and the reason that decides it, not on the book's provenance or on what was computed.",
+        "The user's standing rule reaches the answer alongside the per-name page; reading only the ticker page is the observed failure this scene exists for.",
+        "The note's qualifier travels with the observation it bounds. Quoting the encouraging half as an action basis is a misquote of the user's own record, not a summary of it.",
+        "The unsettled earlier consideration produces at most one question about what the user did, and no history paragraph. Nothing treats it as evidence a trade happened.",
+        "Every portfolio-derived number comes from the consider response; the deciding reason may come from the user's record and the engine's consequence checks the pick.",
+        "If the answer recommends waiting, it names the evidence that settles the question and the next point it can be checked. A scheduled date alone is not that reason.",
+        "Support that lets the user judge how far to trust the call, or see why this beat the alternative they were weighing, belongs in the answer even when the action would not change.",
+        "Owner dogfood, not the automated score, decides whether the record was read faithfully and whether the recommendation was useful."
+      ]
     }
   ]
 }
