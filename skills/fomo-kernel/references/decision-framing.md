@@ -56,7 +56,7 @@ computed consequence, and the strategy-class map below is a middle-floor block
 set. Both are stated once, in "Research-aware strategy framing". Everything
 else about the shape — that the top is one sentence, that every block must add
 a new decision-relevant fact, that the rest of the inventory waits behind one
-offer — is §3's, and this file no longer says it a second time.
+offer — is §3's and is stated only there.
 
 ## What the answer is
 
@@ -200,11 +200,6 @@ Three rules follow, and the third is the one that keeps the first two honest:
    the recommendation.
 2. A limitation that cannot be turned into a question is stated plainly and once — "I have secondary reporting, not the filing" — when it could change the framing or prevent a false impression of coverage. Put a truth-critical denominator, unit, or pricing set beside its number; place other material limitations where they make the answer clearest (expression contract D1–D2, `docs/expression-contract.md`).
 3. A material limitation may never simply disappear. Dropping the narration is a change of shape, not permission to leave a decision-relevant gap unsaid.
-
-> **History:** this rule once required per-claim placement, then #823 replaced
-> it with a universal tail block. Issue #825 removed both formatting mandates:
-> the durable rule is relevance plus truth-critical inline qualification, not
-> a required position or marker.
 
 ## Earning the next piece of evidence
 
