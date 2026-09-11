@@ -18,8 +18,8 @@ someone holding an API key is an interlock nobody re-verifies」),這支把同�
 2. **judge() 的拒答處理。** 拒答回的是 HTTP 200 + 空/半截 content,所以分支必須在讀
    content 之前。這裡用「一被迭代就炸」的假 content 證明程式碼真的沒碰它,而不是靠
    讀順序看起來對。
-3. **送出去的 request 與 tool schema。** 模型 ID、effort 位置、max_tokens 額度、
-   strict schema 的形狀,以及「不准出現已移除參數」。
+3. **送出去的 request 與 JSON output schema。** 模型 ID、effort 位置、max_tokens 額度、
+   output schema 的形狀,以及「不准出現已移除參數」。
 
 anthropic 套件不需要安裝:judge() 是延遲 import,這裡塞一個 stub 進 sys.modules。
 
@@ -64,9 +64,10 @@ class _APIError(Exception):
 
 
 class _Block:
-    def __init__(self, type_, input_=None):
+    def __init__(self, type_, input_=None, text=None):
         self.type = type_
         self.input = input_
+        self.text = text
 
 
 class _Resp:
@@ -204,14 +205,21 @@ def test_refusal_is_handled_before_content():
         ok(True, "stop_details=None 的拒答不會炸成 AttributeError")
 
 
-def test_missing_tool_use_is_diagnosed():
-    _install_stub(_Resp("max_tokens", [_Block("text")]))
+def test_missing_or_truncated_text_block_is_diagnosed():
+    _install_stub(_Resp("max_tokens", []))
     try:
         _anthropic()
-        ok(False, "沒有 tool_use 區塊要拋錯")
+        ok(False, "沒有 text 區塊要拋錯")
     except RuntimeError as exc:
         ok("max_tokens" in str(exc),
-           "缺 tool_use 時錯誤訊息帶得出 stop_reason(截斷才看得出是額度問題)")
+           "缺 text 區塊時錯誤訊息帶得出 stop_reason(截斷才看得出是額度問題)")
+    # 截斷在 JSON 中途:有 text 區塊但讀不成完整評分,一樣是沒評到
+    _install_stub(_Resp("max_tokens", [_Block("text", text='{"coherent_story": {"score": 5')]))
+    try:
+        _anthropic()
+        ok(False, "半截 JSON 要拋錯,不能當評分")
+    except RuntimeError as exc:
+        ok("max_tokens" in str(exc), "半截 JSON 的錯誤訊息帶得出 stop_reason")
 
 
 def test_ungraded_is_not_a_pass():
@@ -368,33 +376,33 @@ def test_history_on_empty_store_is_friendly():
             R._history_path = original
 
 
-# ── 3. request 與 tool schema 的形狀 ────────────────────────────────────────
+# ── 3. request 與 JSON output schema 的形狀 ────────────────────────────────────────
 
 def test_request_shape():
     _sent.clear()
-    _install_stub(_Resp("tool_use", [_Block("text"), _Block("tool_use", GOOD_INPUT)]))
-    ok(_anthropic() == GOOD_INPUT, "正常路徑回傳 tool_use.input")
+    _install_stub(_Resp("end_turn", [_Block("text", text=json.dumps(GOOD_INPUT))]))
+    ok(_anthropic() == GOOD_INPUT, "正常路徑回傳 text 區塊解析出的評分")
     sent = _sent[-1]
 
     default_model = J.DEFAULT_MODELS["anthropic"]
     ok(sent["model"] == PINNED_BACKEND[1], "request 的 model 是解析出來的那個")
     ok("-2025" not in default_model and "-2024" not in default_model,
        f"Anthropic 預設模型 ID 沒有日期後綴(現在是 {default_model})")
-    ok(sent.get("output_config") == {"effort": J.EFFORT},
+    ok(sent.get("output_config", {}).get("effort") == J.EFFORT,
        "effort 放在 output_config 內,不是頂層")
-    ok(sent["tool_choice"] == {"type": "tool", "name": "score_narrative"},
-       "強制 tool_choice 還在")
-    removed = [p for p in ("temperature", "top_p", "top_k", "thinking") if p in sent]
+    ok(sent.get("output_config", {}).get("format") == {"type": "json_schema", "schema": J.SCORE_SCHEMA},
+       "JSON output schema 放在 output_config.format 內")
+    removed = [p for p in ("temperature", "top_p", "top_k", "thinking",
+                           "tools", "tool_choice") if p in sent]
     ok(not removed, f"request 不含已移除/會被拒的參數(發現:{removed})")
     # max_tokens 是「思考 + 回覆」的總上限,這代模型預設會思考
     ok(sent["max_tokens"] >= 16000,
-       f"max_tokens 留得下思考 + tool call 的額度(現在 {sent['max_tokens']})")
+       f"max_tokens 留得下思考 + JSON 回覆的額度(現在 {sent['max_tokens']})")
 
 
-def test_tool_schema_is_strict_shaped():
-    schema = json.loads(json.dumps(J.SCORE_TOOL))     # 必須能序列化成 JSON
-    ok(schema.get("strict") is True, "strict 放在 tool 上,不是 tool_choice 上")
-    top = schema["input_schema"]
+def test_output_schema_is_strict_shaped():
+    schema = json.loads(json.dumps(J.SCORE_SCHEMA))   # 必須能序列化成 JSON
+    top = schema
     ok(top.get("additionalProperties") is False, "頂層 additionalProperties=false")
     ok(set(top["required"]) == set(top["properties"]),
        "required 與 properties 完全對齊(少一軸不會靜默通過)")
@@ -402,14 +410,14 @@ def test_tool_schema_is_strict_shaped():
 
     banned = {"minimum", "maximum", "multipleOf"}
     found = banned & set(_keys(schema))
-    ok(not found, f"沒有 strict 不支援的數值區間約束(發現:{sorted(found)})")
+    ok(not found, f"沒有數值區間關鍵字——分數靠 enum 保證,不靠事後範圍檢查(發現:{sorted(found)})")
 
     for axis in AXES:
         node = top["properties"][axis]
         ok(node.get("additionalProperties") is False
            and sorted(node["required"]) == ["reason", "score"]
            and node["properties"]["score"]["enum"] == [0, 1, 2, 3, 4, 5],
-           f"{axis} 是 strict 形狀且分數是 0–5 enum")
+           f"{axis} 是封閉形狀(additionalProperties=false)且分數是 0–5 enum")
     ok(top["properties"]["overall"]["enum"] == [0, 1, 2, 3, 4, 5],
        "overall 是 0–5 enum")
 
@@ -493,7 +501,7 @@ def test_agy_path_goes_through_the_shared_cli_spec():
     ok(seen.get("parse") is J._parse_scores,
        "用的是敘事 judge 自己的 0–5 解析,不是 episode 的 pass/fail 解析")
     ok(result == {axis: {"score": 4, "reason": "r"} for axis in AXES} | {"overall": 4},
-       "agy 這條路回傳的形狀,跟 strict schema 保證的那份一致")
+       "agy 這條路回傳的形狀,跟 output schema 保證的那份一致")
 
 
 def test_the_shared_runner_actually_uses_the_parser_it_is_given():
@@ -557,10 +565,10 @@ def main():
         test_manifest_gate_alive()
         test_manifest_gate_runs_before_spending()
         test_refusal_is_handled_before_content()
-        test_missing_tool_use_is_diagnosed()
+        test_missing_or_truncated_text_block_is_diagnosed()
         test_ungraded_is_not_a_pass()
         test_request_shape()
-        test_tool_schema_is_strict_shaped()
+        test_output_schema_is_strict_shaped()
         test_history_root_mirrors_the_engine()
         test_every_run_is_recorded_and_readable()
         test_history_reader_shows_drift()

@@ -7,7 +7,7 @@ skills/fomo-kernel/card-spec.md 的敘事鐵律(先肯定再打 / 數字要髒�
 範本答案 —— 改 card-spec.md 的敘事鐵律時,同步改這裡的 RUBRIC 常數。
 
 兩個後端,自動選(#511):Antigravity CLI(`agy`,吃訂閱、不用 API key)或 Anthropic
-SDK(可攜、強制 tool use 所以形狀有保證)。**選哪個後端這件事不在這裡決定**——
+SDK(可攜、structured outputs 所以形狀有保證)。**選哪個後端這件事不在這裡決定**——
 evals/judge_episodes.py 的 resolve_backend() 已經擁有它,這支直接 import 那個決定。
 同一件事有兩個地方決定,就是兩個地方要維護 agy 契約。這支只提供它自己不同的部分:
 rubric、schema,以及 CLI 沒有形狀保證時的 fail-closed 解析。
@@ -65,8 +65,8 @@ RUBRIC = """你是 fomo-kernel(交易復盤卡)的敘事品質審核員。只看
 是你綜合判斷這張卡讀起來像不像「一個真人寫給另一個真人看的復盤」)。每軸附一句理由,
 理由如果是扣分,必須引用卡上的原句當證據。"""
 
-# 0–5 分寫成 enum 而不是 minimum/maximum:strict 模式不吃數值區間約束,enum 吃,
-# 語意一樣而且是 API 保證的(不是拿到分數後自己再驗一次)。
+# 0–5 分寫成 enum 而不是 minimum/maximum:enum 是 JSON schema 保證的形狀,語意一樣
+# 而且是 API 保證的(不是拿到分數後自己再驗一次)。
 _SCORE = {"type": "integer", "enum": [0, 1, 2, 3, 4, 5]}
 _AXIS = {
     "type": "object",
@@ -77,23 +77,18 @@ _AXIS = {
 _AXES = ("coherent_story", "strength_first", "concrete_evidence",
          "plain_language", "quote_not_lecture")
 
-SCORE_TOOL = {
-    "name": "score_narrative",
-    "description": "回報敘事品質五軸評分 + overall",
-    "strict": True,  # 回傳保證符合 schema,少一軸/多一軸都不會靜默通過
-    "input_schema": {
-        "type": "object",
-        "additionalProperties": False,
-        "required": [*_AXES, "overall"],
-        "properties": {**{axis: _AXIS for axis in _AXES}, "overall": _SCORE},
-    },
+SCORE_SCHEMA = {  # 回傳保證符合 schema,少一軸/多一軸都不會靜默通過
+    "type": "object",
+    "additionalProperties": False,
+    "required": [*_AXES, "overall"],
+    "properties": {**{axis: _AXIS for axis in _AXES}, "overall": _SCORE},
 }
 
 
 def _is_score(value) -> bool:
     """0–5 的整數,而且真的是整數。
 
-    Anthropic 那條路的分數形狀是 API 用 strict enum 保證的;CLI 這條路沒有保證,
+    Anthropic 那條路的分數形狀是 API 用 output schema 的 enum 保證的;CLI 這條路沒有保證,
     所以這裡的嚴格程度必須跟那個 enum 一樣——替代品比被替代的鬆,等於換了後端就
     悄悄降低了標準。bool 在 Python 是 int 的子類,`True` 會被當成 1,要擋掉。
     """
@@ -146,7 +141,7 @@ def _judge_agy(card_text: str, model: str) -> dict:
 
 def _judge_anthropic(card_text: str, model: str) -> dict:
     # anthropic 延遲 import(對照 evals/judge_episodes.py):這支是 opt-in、要付費的
-    # 工具,離線測試套件刻意不依賴 SDK。import 留在函式內,SCORE_TOOL 這些純邏輯才
+    # 工具,離線測試套件刻意不依賴 SDK。import 留在函式內,SCORE_SCHEMA 這些純邏輯才
     # 能被 tests/test_judge_harness_offline.py 免費驗活——只有拿得到 API key 的人
     # 才跑得到的閘門,等於沒人在複驗。
     try:
@@ -160,13 +155,12 @@ def _judge_anthropic(card_text: str, model: str) -> dict:
         resp = client.messages.create(
             model=model,
             # max_tokens 是「思考 + 回覆」的總上限,不是回覆的上限。這個模型預設會思考,
-            # 舊的 1024 會在還沒吐出 tool_use 就被截斷(症狀是 stop_reason=max_tokens、
-            # 沒有 tool_use 區塊),所以留足額度。
+            # 1024 會在還沒吐出 JSON 就被截斷(症狀是 stop_reason=max_tokens、
+            # 沒有 text 區塊),所以留足額度。
             max_tokens=16000,
             system=RUBRIC,
-            output_config={"effort": EFFORT},
-            tools=[SCORE_TOOL],
-            tool_choice={"type": "tool", "name": "score_narrative"},
+            output_config={"effort": EFFORT,
+                           "format": {"type": "json_schema", "schema": SCORE_SCHEMA}},
             messages=[{"role": "user", "content": f"待審的卡:\n\n{card_text}"}],
         )
     except anthropic.APIError as e:
@@ -178,13 +172,21 @@ def _judge_anthropic(card_text: str, model: str) -> dict:
             "judge 模型拒答了這張卡"
             f"(category={getattr(resp.stop_details, 'category', None)!r})—— "
             "沒評到不等於通過,別拿這次結果當判決。")
+    # output schema 保證 text 區塊是符合 schema 的 JSON;沒有 text 區塊(例如被
+    # max_tokens 截斷)是失敗的呼叫,不是評分。讀法沿用 CLI 那條路的 fail-closed
+    # 解析,兩個後端只有一份形狀契約。
     try:
-        tool_use = next(b for b in resp.content if b.type == "tool_use")
+        text = next(b for b in resp.content if b.type == "text").text
     except StopIteration:
         raise RuntimeError(
-            f"judge() 的回應沒有 tool_use 區塊,即使已強制 tool_choice(stop_reason={resp.stop_reason!r})"
+            f"judge() 的回應沒有 text 區塊,即使已指定 JSON output schema(stop_reason={resp.stop_reason!r})"
         ) from None
-    return tool_use.input
+    scored = _parse_scores(text)
+    if scored is None:
+        raise RuntimeError(
+            f"judge() 的回應不是完整的五軸 + overall 評分(stop_reason={resp.stop_reason!r})"
+            "—— 沒評到不等於通過,別拿這次結果當判決。")
+    return scored
 
 
 def judge(card_text: str, *, backend=None, model=None) -> dict:

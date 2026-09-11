@@ -957,7 +957,7 @@ def test_a_run_that_would_judge_nothing_is_not_a_pass():
 
 # The backend seam. `agy` needs no key and is a different vendor from the one
 # that authored the answers, which is the point; what it cannot give is the
-# shape guarantee forced tool use provides, so everything below is what replaces
+# shape guarantee structured outputs provide, so everything below is what replaces
 # that guarantee. None of it calls a model.
 
 def test_a_reply_the_harness_cannot_read_is_not_a_verdict():
@@ -1045,9 +1045,10 @@ def test_anthropic_judge_uses_the_resolved_model_for_default_and_override():
         def create(self, **kwargs):
             sent.append(kwargs)
             return types.SimpleNamespace(
-                stop_reason="tool_use", stop_details=None,
+                stop_reason="end_turn", stop_details=None,
                 content=[types.SimpleNamespace(
-                    type="tool_use", input={"two_sided": {"verdict": "pass", "reason": "x"}})])
+                    type="text",
+                    text=json.dumps({"two_sided": {"verdict": "pass", "reason": "x"}}))])
 
     client = types.SimpleNamespace(messages=Messages())
     anthropic = types.SimpleNamespace(APIError=RuntimeError)
@@ -1067,6 +1068,58 @@ def test_anthropic_judge_uses_the_resolved_model_for_default_and_override():
         assert sent[-1]["model"] == "claude-opus-5-explicit"
     finally:
         J.MODEL = original_model
+
+
+def test_structured_output_judge_reads_the_text_block_and_fails_closed():
+    """The shared Anthropic path after the move to structured outputs: the
+    request carries a JSON output schema and no tool fields, a good reply is
+    read from the text block through the same fail-closed parser the CLI route
+    uses, and every degraded reply is an error rather than a verdict."""
+    episode = _judged(axes=("two_sided",), fails=())
+    answer = episode["answers"][0]
+    anthropic = types.SimpleNamespace(APIError=RuntimeError)
+
+    def client_returning(response):
+        sent = []
+
+        class Messages:
+            def create(self, **kwargs):
+                sent.append(kwargs)
+                return response
+        return types.SimpleNamespace(messages=Messages()), sent
+
+    def reply(stop_reason, content, stop_details=None):
+        return types.SimpleNamespace(stop_reason=stop_reason, stop_details=stop_details,
+                                     content=content)
+
+    def text(body):
+        return types.SimpleNamespace(type="text", text=body)
+
+    good = json.dumps({"two_sided": {"verdict": "fail", "reason": "one direction only"}})
+    client, sent = client_returning(reply("end_turn", [text(good)]))
+    verdicts = J.judge_once("model-a", client, anthropic, episode, answer, ("two_sided",))
+    assert verdicts == {"two_sided": {"verdict": "fail", "reason": "one direction only"}}
+    request = sent[-1]
+    assert request["output_config"]["format"]["type"] == "json_schema"
+    assert request["output_config"]["format"]["schema"]["required"] == ["two_sided"]
+    assert "tools" not in request and "tool_choice" not in request
+
+    degraded = {
+        "refusal": reply("refusal", [], types.SimpleNamespace(category="cyber")),
+        "no text block": reply("max_tokens", []),
+        "truncated JSON": reply("max_tokens", [text('{"two_sided": {"verdict": "fa')]),
+        "missing axis": reply("end_turn", [text(json.dumps(
+            {"overrulable": {"verdict": "pass", "reason": "x"}}))]),
+        "bad verdict value": reply("end_turn", [text(json.dumps(
+            {"two_sided": {"verdict": "maybe", "reason": "x"}}))]),
+    }
+    for label, response in degraded.items():
+        client, _sent = client_returning(response)
+        try:
+            J.judge_once("model-a", client, anthropic, episode, answer, ("two_sided",))
+        except RuntimeError:
+            continue
+        raise AssertionError(f"a {label} reply must be an error, not a verdict")
 
 
 def test_judge_coverage_requires_every_axis_seen_both_passing_and_failing():

@@ -750,7 +750,7 @@ def judge_input_request(episode, answer, axes, *, backend, model,
                 material_fn=material_fn),
         }
     return {
-        "transport": f"{backend}_structured_tool",
+        "transport": f"{backend}_structured_output",
         "call_spec": BASE.structured_call_spec(
             model, episode, answer, axes, system=SYSTEM, rubric=RUBRIC,
             material_fn=material_fn),

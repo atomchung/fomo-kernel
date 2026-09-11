@@ -12,7 +12,7 @@ non-deterministic runs out of the default suite).
 
 Two backends, chosen automatically: the Antigravity CLI (``agy``, no API key,
 and a different vendor from the one that authored the answers) or the Anthropic
-SDK (portable, and shape-guaranteed by forced tool use). See ``resolve_backend``.
+SDK (portable, and shape-guaranteed by structured outputs). See ``resolve_backend``.
 
 Usage:
   python3 evals/judge_episodes.py --plan          # what would be judged, no model calls
@@ -85,8 +85,10 @@ RUNS = int(os.environ.get("TR_JUDGE_RUNS", "3"))
 # `anthropic` is the portable one: any maintainer with their own key can run
 # this, including in CI, on a checkout that knows nothing about this machine.
 # It also gives the strongest possible guarantee on the response *shape* —
-# forced tool use plus `strict: true`, so a malformed verdict is impossible
-# rather than merely unlikely.
+# structured outputs (`output_config.format` with a JSON schema), so a
+# malformed verdict is impossible rather than merely unlikely. Forced tool
+# use is not used: Claude Fable 5.1 rejects it, and a call that exists only
+# to get JSON back is what structured outputs are for.
 #
 # `agy` is the independent one, and on this repository that matters more than
 # it looks. The answers under test were authored by Claude, and a Claude judge
@@ -103,7 +105,6 @@ MODEL = os.environ.get("TR_JUDGE_MODEL")  # resolved per backend in `resolve_bac
 AGY_ATTEMPTS = 3
 AGY_TIMEOUT_SECONDS = 300
 STRUCTURED_MAX_TOKENS = 16000
-STRUCTURED_TOOL_CHOICE = {"type": "tool", "name": "record_verdicts"}
 
 
 def _resolve_agy_path(configured=None, *, which=shutil.which):
@@ -249,8 +250,8 @@ def material(episode, answer):
     return "\n".join(lines)
 
 
-def _tool(axes, *, rubric=None):
-    """A forced-tool schema carrying exactly the axes in scope, and nothing else."""
+def _output_schema(axes, *, rubric=None):
+    """The JSON schema the reply must satisfy: exactly the axes in scope, nothing else."""
     rubric = RUBRIC if rubric is None else rubric
     properties = {}
     for axis in axes:
@@ -265,15 +266,10 @@ def _tool(axes, *, rubric=None):
             },
         }
     return {
-        "name": "record_verdicts",
-        "description": "Record one verdict per axis you were asked to judge.",
-        "strict": True,
-        "input_schema": {
-            "type": "object",
-            "additionalProperties": False,
-            "required": list(axes),
-            "properties": properties,
-        },
+        "type": "object",
+        "additionalProperties": False,
+        "required": list(axes),
+        "properties": properties,
     }
 
 
@@ -473,15 +469,17 @@ def judge_once_agy(model, episode, answer, axes, *, system=None, rubric=None,
 
 def structured_call_spec(model, episode, answer, axes, *, system=None,
                          rubric=None, material_fn=None):
-    """Canonical kwargs handed to the structured-tool model client."""
+    """Canonical kwargs handed to the structured-output model client."""
     system = SYSTEM if system is None else system
     return {
         "model": model,
         "max_tokens": STRUCTURED_MAX_TOKENS,
         "system": system,
-        "output_config": {"effort": EFFORT},
-        "tools": [_tool(axes, rubric=rubric)],
-        "tool_choice": dict(STRUCTURED_TOOL_CHOICE),
+        "output_config": {
+            "effort": EFFORT,
+            "format": {"type": "json_schema",
+                       "schema": _output_schema(axes, rubric=rubric)},
+        },
         "messages": [{"role": "user", "content": _prompt(
             episode, answer, axes, rubric=rubric, material_fn=material_fn)}],
     }
@@ -504,12 +502,22 @@ def judge_once(model, client, anthropic, episode, answer, axes, *, system=None,
             f"the judge model declined {episode['id']}/{answer['id']} "
             f"(category={getattr(response.stop_details, 'category', None)!r}). "
             "A refused episode is ungraded, not passing.")
+    # `output_config.format` guarantees the text block is JSON matching the
+    # schema; a response with no text block (a `max_tokens` cut, for instance)
+    # is a failed call, never a verdict, and the same fail-closed reader the
+    # CLI route uses reads it, so both backends hold one shape contract.
     try:
-        return next(block for block in response.content if block.type == "tool_use").input
+        text = next(block for block in response.content if block.type == "text").text
     except StopIteration:
         raise RuntimeError(
-            f"no tool_use block for {episode['id']}/{answer['id']} despite a forced "
-            f"tool_choice (stop_reason={response.stop_reason!r})") from None
+            f"no text block for {episode['id']}/{answer['id']} despite a JSON "
+            f"output schema (stop_reason={response.stop_reason!r})") from None
+    verdicts = _parse_verdicts(text, axes)
+    if verdicts is None:
+        raise RuntimeError(
+            f"the reply for {episode['id']}/{answer['id']} did not carry a verdict "
+            f"for every axis (stop_reason={response.stop_reason!r})")
+    return verdicts
 
 
 def vote(samples, axis):
