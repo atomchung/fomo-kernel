@@ -512,6 +512,81 @@ def judge_once(model, client, anthropic, episode, answer, axes, *, system=None,
             f"tool_choice (stop_reason={response.stop_reason!r})") from None
 
 
+def text_call_spec(model, prompt, *, system=""):
+    """Canonical request for one opt-in, unconstrained text generation.
+
+    Evaluation adapters use this small transport seam when they need to capture
+    a product answer before passing it to this module's structured judge.  It
+    keeps provider resolution, effort, retries, and refusal handling in one
+    place; it is deliberately not a product-runtime API.
+    """
+    return {
+        "agy": {
+            "argv": [AGY_PATH, "-p", f"{system}\n\n{prompt}".strip(),
+                     "--model", model, "--effort", EFFORT],
+            "subprocess_kwargs": {"capture_output": True, "text": True,
+                                   "timeout": AGY_TIMEOUT_SECONDS},
+            "max_attempts": AGY_ATTEMPTS,
+        },
+        "anthropic": {
+            "model": model,
+            "max_tokens": STRUCTURED_MAX_TOKENS,
+            "system": system,
+            "output_config": {"effort": EFFORT},
+            "messages": [{"role": "user", "content": prompt}],
+        },
+    }
+
+
+def generate_text_once(backend, model, prompt, *, system="", client=None,
+                       anthropic=None, request=None):
+    """Generate one answer through the shared opt-in transports.
+
+    A failed or refused call raises a receiptable error.  Callers record that
+    outcome as unavailable evidence; they never substitute a local answer.
+    """
+    call = request or text_call_spec(model, prompt, system=system)[backend]
+    if backend == "agy":
+        if not call.get("argv") or call["argv"][0] is None:
+            raise RuntimeError("agy text call could not start: no executable was resolved")
+        detail = ""
+        for attempt in range(call["max_attempts"]):
+            try:
+                finished = subprocess.run(call["argv"], **call["subprocess_kwargs"])
+            except subprocess.TimeoutExpired:
+                continue
+            except OSError as exc:
+                raise RuntimeError(f"agy text call could not start: {exc}") from exc
+            if finished.returncode == 0 and finished.stdout.strip():
+                return finished.stdout
+            detail = ((finished.stderr or "") + (finished.stdout or "")).strip()
+            transient = "Agent execution terminated due to error." in (
+                (finished.stderr or "") + (finished.stdout or ""))
+            if not transient:
+                break
+            if attempt + 1 == call["max_attempts"]:
+                break
+        suffix = f": {detail[:500]}" if detail else ""
+        raise RuntimeError(f"agy text call returned no usable answer{suffix}")
+    if backend != "anthropic":
+        raise ValueError(f"unknown text backend {backend!r}")
+    if client is None or anthropic is None:
+        import anthropic as anthropic_module
+        anthropic = anthropic_module
+        client = anthropic.Anthropic()
+    try:
+        response = client.messages.create(**call)
+    except anthropic.APIError as exc:
+        raise RuntimeError(f"text call failed: {exc}") from exc
+    if response.stop_reason == "refusal":
+        raise RuntimeError("text model declined the prompt")
+    text = "".join(getattr(block, "text", "") for block in response.content
+                   if getattr(block, "type", None) == "text")
+    if not text.strip():
+        raise RuntimeError(f"text call returned no text (stop_reason={response.stop_reason!r})")
+    return text
+
+
 def vote(samples, axis):
     """Majority verdict across samples; a tie is ``ambiguous``, never resolved.
 

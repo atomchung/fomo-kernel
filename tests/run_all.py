@@ -124,6 +124,7 @@ SUITES = [
     # `evals/judge_episodes.py` states for its own interlocks -- one only
     # reachable by someone holding an API key is one nobody re-verifies.
     ("Judge harness offline interlocks", "tests/test_judge_harness_offline.py", "qa-eval"),
+    ("Generic Parity fast-probe interlocks (#715)", "tests/test_generic_parity.py", "qa-eval"),
     ("Local data-control CLI", "tests/test_coach_data_cli.py", "product"),
     ("Skill dependency preflight (doctor)", "tests/test_deps_doctor.py", "product"),
     ("Session finalization idempotency", "tests/test_coach_session_idempotency.py", "product"),

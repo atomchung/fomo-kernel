@@ -71,6 +71,28 @@ Converted misses live in [episodes/](episodes/README.md) and replay on every sui
 
 Prefer deterministic checks over an LLM judge, and an LLM judge over manual inspection. Use a judge only for narrative coherence, not for facts that code can assert. Prove each checker with both a known-good artifact and an intentional mutation.
 
+## Generic Parity fast probe (#715)
+
+`run_generic_parity.py` is an opt-in, host-side A01/A07/A10 probe for the
+no-book route. It is not an engine route, a product-surface capture, or a
+Generic Parity acceptance gate. It freezes exactly `AGENTS.md`, the output
+voice contract, decision framing, and the four-prior research authority; it
+does not use `consider --product-surface`, `consider_surface.py`, or the QA
+synthetic walkthrough.
+
+```bash
+python3 evals/run_generic_parity.py A01 A07 A10 --plan --output-dir /tmp/fomo-generic-parity
+python3 evals/run_generic_parity.py A01 A07 A10 \
+  --generator-backend anthropic --judge-backend agy \
+  --output-dir /tmp/fomo-generic-parity
+```
+
+The plan makes zero model calls. A live run captures one raw answer per case,
+runs numeric/product/process/question-count gates before all judging, then uses
+three independent structured samples for the six G0 axes. Its receipt is local
+to the explicit output directory and always says `owner_unreviewed` and
+`not_granted`; `candidate_pass` is iteration evidence, never merge authority.
+
 For a non-recoverable `consider` refusal, keep the user moment separate from
 the diagnostic trace. EP-010 and EP-011 protect the claim boundary: portfolio
 numbers must come from `usable_facts`, known user context must not be rewritten,

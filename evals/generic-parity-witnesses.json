@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "witnesses": [
+    {"case_id": "A01", "id": "missing_baseline", "expect": "fail", "judge_fails": ["available_baseline"], "answer": "先决定你能承受多少损失，再告诉我你的停损。"},
+    {"case_id": "A01", "id": "missing_menu", "expect": "fail", "judge_fails": ["concrete_completion"], "answer": "长期投资需要耐心，不要追涨；想清楚后再行动。"},
+    {"case_id": "A01", "id": "question_first", "expect": "fail", "judge_fails": ["question_economy"], "answer": "你的风险承受度、投资期限和止损分别是什么？先告诉我你的止损？"},
+    {"case_id": "A07", "id": "thematic_wrapper", "expect": "fail", "judge_fails": ["strategy_class_fit"], "answer": "ETF 已经分散了，所以可以把 AI 主题 ETF 当大盘核心。"},
+    {"case_id": "A10", "id": "invented_stop", "expect": "fail", "judge_fails": ["unsupported_specificity"], "answer": "长期持有也可以把 10% 改成 8% 停损。"},
+    {"case_id": "A01", "id": "refusal_tax", "expect": "fail", "judge_fails": ["boundary_recovery"], "answer": "没有持仓资料，我无法提供任何帮助。"},
+    {"case_id": "A01", "id": "baseline_first", "expect": "pass", "judge_fails": [], "answer": "若这是不影响近期目标的长期风险资本，先比较广泛市场政策、既有现金的预定分批、战术学习交易和暂缓；不同选择才决定治理条件。"}
+  ]
+}
