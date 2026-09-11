@@ -315,15 +315,11 @@ disclosures last because they qualify what precedes them). It is a dependency
 order and never a reading order: [the answer's own order](#answer-shape) is the
 pyramid's, and the fact that decides the call opens it.
 
-### The three lists, and why each fact is on the one it is on (#830)
+### Why each owed fact is on the list it is on (#830)
 
-Owner ruling, 2026-08-20. The block used to be one list of roughly fifteen owed
-facts, and an obligation list has one cheapest discharge: a sentence per item.
-The audit asked, of each entry, what its must-have reason was, and deleted the
-ones that had none — starting with `basis.state_version`, a content hash that
-had been sitting on the list of facts a human answer owes.
-
-**Kept, with the reason each keep is a keep:**
+An obligation list has one cheapest discharge — a sentence per item — so every
+entry on `must_state` carries the reason it may not be dropped, and nothing is
+on it without one:
 
 | Kept | Why it may not be dropped |
 |---|---|
@@ -334,18 +330,6 @@ had been sitting on the list of facts a human answer owes.
 | "Recorded a consideration, not executed", when a canonical write happened | The user cannot see the difference from where they sit, and the difference is real money. |
 | Source and as-of on a public fact, compact and inline | A looked-up fact with no provenance is indistinguishable from an invented one (C2). |
 | One warning line when pricing is degraded | Cost weights can invert which position is the largest — the fixture evidence in [freeform-answers.md](freeform-answers.md). |
-
-**Deleted, and what replaced each:**
-
-| Deleted | What it is now |
-|---|---|
-| `basis.state_version` in the answer | `machine_state`. Never rendered; *"this is your book as of the 20th"* is the same fact in the register the rest of the answer is in. |
-| The basis four-piece recital every answer | Two facts, `as_of` and `stale_days`, and staleness is *said* only when it could change the decision. Otherwise it is one end-block line. |
-| The concentration family every answer | `may_state`. It surfaces when it is the deciding fact or when it touches the user's own cap — and the second case is not judgment, because `rule_effects` carries it and `required_coverage` enforces it. |
-| Cash balance and weight every answer | `may_state`. State it when cash is the question or a floor is being crossed. |
-| Enumerating `unchecked` | Nothing. A material gap earns one end-block line; four lines saying nothing was measured is the purest form of discharging a list. |
-| A standalone counter-case section | The falsifier line. `counter_case: when_material` stays in the payload; it stops becoming a section. |
-| Basis and caliber narrated in the body *and* the footer | One compact end block. `disclosures_display` lines land there. |
 
 The data layer did not shrink. Every number is still computed, still anchored,
 still citable, and the user can ask for any of it — which is what makes not
@@ -395,8 +379,7 @@ decision-relevant facts without turning available ones into standing copy.
 The answer's shape is expression contract §3's
 — one sentence on top, an increment-gated middle, the rest of the inventory
 behind a single offer, one caliber block at the end — and this file states it
-nowhere else (#832; before that, the reader's-question-chain paragraph here was
-one of six independent phrasings of the same idea).
+nowhere else (#832).
 
 Two parameters this route adds, and only these two: **which fact wins the top
 sentence** (lead selection, below) and **which blocks the middle floor may
@@ -441,9 +424,9 @@ This freedom is never a discount on the factual floor: every `must_state` entry
 is still owed, and every `may_state` entry is still there to reach for the
 moment the decision turns on it.
 
-### One payload, three renderings
+### One payload, two renderings
 
-A fictional book, run through the real engine: six US holdings at $100,000 total cost, NVDA at 30%, three semiconductor names summing to 60% `ai_pct`; the premise buys 100 more NVDA at $127.50 — below cost, dated after the book's last row — with `reason` *"NVDA is still my highest-conviction name in the book."* and `why_now` *"It dropped hard this week and the discount feels too good to pass up."* The engine returns: NVDA 30% → 37.9%, `ai_pct` 60% → 64.5%, `oversize_triggered` already true *before* the trade, cash running to −$112,750 with `cash_unreliable`, a 45-day-stale unverified cost-basis record, and `unclassified_book` naming three holdings. Under the pre-#830 block that was seventeen owed facts and five unchecked items; under the current one it is nine owed, six available, one never rendered, and the unchecked list is not a recital at all. No rule collision is on file. All three renderings below are complete against the floor. They are witnesses to the shape, not reference answers or test oracles.
+A fictional book, run through the real engine: six US holdings at $100,000 total cost, NVDA at 30%, three semiconductor names summing to 60% `ai_pct`; the premise buys 100 more NVDA at $127.50 — below cost, dated after the book's last row — with `reason` *"NVDA is still my highest-conviction name in the book."* and `why_now` *"It dropped hard this week and the discount feels too good to pass up."* The engine returns: NVDA 30% → 37.9%, `ai_pct` 60% → 64.5%, `oversize_triggered` already true *before* the trade, cash running to −$112,750 with `cash_unreliable`, a 45-day-stale unverified cost-basis record, and `unclassified_book` naming three holdings. Nine facts are owed, six are available, one is never rendered, and the unchecked list is not a recital. No rule collision is on file. Both renderings below are complete against the floor. They are witnesses to the shape, not reference answers or test oracles.
 
 **Complete but flat — every fact true and anchored, no judgment, no shape:**
 
@@ -451,29 +434,17 @@ A fictional book, run through the real engine: six US holdings at $100,000 total
 
 Every number is anchored and every owed fact is present, and it fails on both axes this section governs. On judgment: the for-side states what the user already knows, the against-side is the disclosure list wearing a new heading and never touches the for-side, and nothing says what the decision actually trades off. On expression: there is no body/block split at all — the limitations are inline sentences in the same list as the numbers, which is D1's wall of per-number interruptions in its purest form.
 
-**Decision-first, whitelist era — same payload, every owed fact discharged:**
+**Same payload, the current shape (#830):**
 
-> Do not add NVDA at this size. Priced on cost rather than on current market value, NVDA goes from 30% to about 38% and semiconductors as a group from 60% to about 65% — and that 65% is measured over the classified part of the book, which excludes JNJ, PG and KO. The position-size line was already triggered before this trade, so this widens an existing breach rather than creating one.
+> Do not add NVDA at this size — it was already past the sizing line the engine measures against before this trade, and this takes it further past. On cost rather than market value it goes from 30% to about 38%.
 >
-> The material case the other way is that these are cost weights: if this week's drop hit your semiconductor names hardest, market-value concentration could be lower than the record shows. But your own words — "it dropped hard this week and the discount feels too good to pass up" — describe a price move, not new business evidence. That is my read, not an engine fact.
->
-> The recorded book is 45 days old and has never been reconciled against a broker view. Its −$112,750 cash line is an unanchored running sum, not evidence of a real overdraft. Nothing has been executed.
-
-The factual floor is identical — same numbers, disclosures, and verbatim quotes. The unchecked list is filtered by materiality. One lead is chosen, and any counter-case directly attacks its support rather than satisfying symmetry.
-
-What changed on expression, and which rule decides each: the cost-versus-market basis and the incomplete classification denominator stay in the body, because they are the *unit* and the *denominator* of the numbers in that sentence (D2) — without them those percentages refer to something else. Staleness and cash reliability are collected because both materially qualify confidence in the recommendation. No marker, tail position, or numeric cap decides that placement (D1/D3/D5), and nothing appears twice (D6).
-
-**Same payload, after the deletion (#830):**
-
-> Do not add NVDA at this size — the position-size line was already over before this trade, so this widens a breach rather than opening one. On cost rather than market value it goes from 30% to about 38%.
->
-> What would change my mind: market-value weights. These are cost weights, and if this week's drop hit your semiconductor names hardest, the real concentration could be lower than the record shows. Your own words — "it dropped hard this week and the discount feels too good to pass up" — describe a price move, not new business evidence; that is my read, not an engine fact. Hand me current closes and I will re-run it.
+> What would change my mind: market-value weights. These are cost weights, and if this week's drop hit your semiconductor names hardest, the real concentration could be lower than the record shows. Your own words — "NVDA is still my highest-conviction name in the book" and "it dropped hard this week and the discount feels too good to pass up" — describe conviction and a price move, not new business evidence; that is my read, not an engine fact. Hand me current closes and I will re-run it.
 >
 > (Book 2026-06-15, 45 days old, never reconciled; weights on cost; the cash line is an unanchored running sum, not a real overdraft; sector shares exclude JNJ, PG and KO. Nothing has been executed.)
 
-Three paragraphs where the second rendering has three and the first has one wall, and the difference is not compression. The second rendering states the AI/sector concentration, the cash number, and the classification denominator in body prose because the whitelist owed all three; here the concentration family and the cash balance are `may_state`, so the answer reaches for them only where they carry the argument — the sector figure is gone because nothing about the recommendation turns on it, and the cash line survives only as the end-block caveat that stops a −$112,750 from reading as a real overdraft. The counter-case became the falsifier, which is the same content with a decision attached to it. Every caliber line moved to the end block and appears once. `basis.state_version` appears nowhere, in any of the three.
+Three paragraphs where the flat rendering has one wall, and the difference is not compression. The concentration family and the cash balance are `may_state`, so the answer reaches for them only where they carry the argument — the sector figure is absent because nothing about the recommendation turns on it, and the cash line survives only as the end-block caveat that stops a −$112,750 from reading as a real overdraft. The counter-case is the falsifier: the same content with a decision attached to it. The cost-versus-market basis stays in the body because it is the *unit* of the number in that sentence (D2), and every other caliber line sits in the end block, once (D7). `basis.state_version` appears nowhere.
 
-The floor did not move: the same rule effect, the same verbatim quote, the same disclosures. Ask *"what were the other numbers?"* and every one of them is still there.
+The floor did not move: the same sizing facts, the same two verbatim quotes, the same disclosures. Ask *"what were the other numbers?"* and every one of them is still there.
 
 ## The recommendation case
 

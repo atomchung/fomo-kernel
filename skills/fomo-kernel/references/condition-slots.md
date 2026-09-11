@@ -2,7 +2,7 @@
 
 The commitment step offers candidate rules the engine already tracks. A user who instead says *"sell if quarterly revenue growth drops under 30%"* is naming something `state.metrics` has never held — and that is the most informative thing a review receives, because it is the part of their thinking the engine's defaults did not anticipate.
 
-It used to be the one thing thrown away: an unknown `metric_key` failed the whole finalize. It is now stored as a **condition slot** in `conditions.jsonl`, in the user's own words, whether or not anyone can check it. The record is the product; a condition that exists only in the conversation is a promise nobody can hold the user to.
+It is stored as a **condition slot** in `conditions.jsonl`, in the user's own words, whether or not anyone can check it — finalize does not fail on a quantity `state.metrics` has never held. The record is the product; a condition that exists only in the conversation is a promise nobody can hold the user to.
 
 ## When this applies
 
