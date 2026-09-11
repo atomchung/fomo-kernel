@@ -2,12 +2,12 @@
 
 ## The exemplars
 
-Two ends of one rule live on this surface. A simple lookup should still look
-like the compact `freeform_cash_question` or `freeform_positions_view` scenes
-in the corpus; do not inflate it. The fenced scene below is the **upper
-witness**: when a live decision genuinely turns on several sourced increments,
-the increment gate earns several blocks. It is not a minimum length, a default
-answer size, or permission to narrate research that does not change the call.
+Two ends of one rule live on this surface, and both are shown here. The
+first fenced scene is the **upper witness**: when a live decision genuinely
+turns on several sourced increments, the increment gate earns several blocks.
+It is not a minimum length, a default answer size, or permission to narrate
+research that does not change the call. The second is the **compact
+witness**: a simple lookup looks like it, and is not inflated.
 
 It is copied verbatim from `tests/agent/expression-witnesses.json`, scene
 `freeform_research_depth` — the corpus that
@@ -25,6 +25,12 @@ and `tests/test_expression_contract.py` fails if the two copies disagree.
 會讓我重新評估 30% 內小幅加碼的證據有兩個：最終融資把舉債比例壓到 40% 以下，或交割後兩季的協同效益 run-rate 達到管理層路徑。在那之前，若仍要增加曝險，就把這筆縮到買後仍不超過 30%；不要先跨過自己的線，再等交易替你證明自己。
 
 （帳本 8/14、價格 8/14 收盤；未評反壟斷通過機率與交易後估值）
+```
+
+```exemplar freeform_cash_question
+帳上現金 $12,300，佔帳本 3.4%——夠你做一筆一般大小的加碼，不夠做兩筆。
+
+（帳本 8/14；價格 8/14 收盤；未計入未交割款）
 ```
 
 The user does not only meet this product through `prepare → preview →
@@ -134,9 +140,7 @@ conversation does not loosen that default, and only `card-public.md` is
 share-safe, on request.
 
 **Positions view.** Trigger: the user asks, in freeform conversation, to see
-their current holdings or positions. Shape, revised by owner ruling
-2026-07-30 (#561) from the original four-column table into the richer,
-already-demoed one: one row per held ticker — ticker, shares, avg cost,
+their current holdings or positions. Shape (#561): one row per held ticker — ticker, shares, avg cost,
 current value, $ P&L, and the sizing / averaging-down / exit-discipline /
 hold-consistency diagnosis tags — sorted by size (largest |$ P&L impact|
 first), exactly the "Per-position diagnosis" section README.md's "What it
@@ -199,8 +203,8 @@ text-first default is a **latency** preference about how much work to do before
 answering; it is not a shape, it never was, and reading it as one is how a
 surface acquires a second answer-shape rule.
 
-Since #830, *where* they go is a rule rather than a free choice. A fact lives
-on exactly one floor (D7): the facts that decide the call open the body, a
+*Where* they go is a rule, not a free choice (D7). A fact lives on exactly one
+floor: the facts that decide the call open the body, a
 truth-critical qualifier stays beside its number, and everything else material
 — sources and as-of, which book, which session, a degraded price, a gap that
 could change the recommendation — collects into **one compact end block, one
@@ -246,11 +250,10 @@ line count. The review card's footnote remains that surface's own layout.
 **Obligation selection is still per-route.** What the card owes comes from
 `build_honesty_ledger()`; what a `consider` answer owes comes from its
 `challenge` block (`trade-consequence.md`, "What the answer owes"), computed
-per call — and since #830 that block separates what an answer owes from what
-it merely *has*, so "available in the payload" is no longer a reason to say
-something. Every *other* ad hoc question in this file's opening paragraph —
+per call — and that block separates what an answer owes from what it merely
+*has*, so "available in the payload" is not a reason to say something. Every *other* ad hoc question in this file's opening paragraph —
 "what's my portfolio worth", "how much cash do I have" — has no engine-computed
-obligation list of its own, and #823 did not build one. Those answers inherit
+obligation list of its own. Those answers inherit
 the placement rules above and select their own disclosures from what the engine
 response they read actually carried.
 

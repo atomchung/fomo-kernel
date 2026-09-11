@@ -338,25 +338,36 @@ def test_every_surface_reference_opens_with_its_canonical_exemplar():
         assert path.is_file(), f"surface {surface!r} names a missing file: {named[0]}"
         text = path.read_text(encoding="utf-8")
         found = _exemplars(text)
-        assert len(found) == 1, (
-            f"{path.relative_to(ROOT)} carries {len(found)} exemplar blocks, not one")
+        assert found, f"{path.relative_to(ROOT)} carries no exemplar block"
         headings = [match.start() for match in re.finditer(r"^## ", text, re.M)]
         fence = text.index("```exemplar ")
         assert headings and headings[0] < fence and (
             len(headings) == 1 or fence < headings[1]), (
             f"{path.relative_to(ROOT)} does not open with its exemplar; progressive "
             "disclosure only helps if the example is what the reader meets first")
-        scene_id, body = found[0]
-        scene = scenes.get(scene_id)
-        assert scene is not None, (
-            f"{path.relative_to(ROOT)} names scene {scene_id!r}, absent from the corpus")
-        assert scene["surface"] == surface, (
-            f"{path.relative_to(ROOT)} opens with a {scene['surface']!r} exemplar")
-        assert scene["kind"] == "positive", (
-            f"{path.relative_to(ROOT)} opens with a {scene['kind']} exemplar ({scene_id})")
-        assert _normalized(body) == _normalized(scene["answer"]), (
-            f"{path.relative_to(ROOT)} and the witness copy of {scene_id!r} have drifted; "
-            "one of the two was edited alone and they are no longer one exemplar")
+        scene_ids = [scene_id for scene_id, _body in found]
+        assert len(scene_ids) == len(set(scene_ids)), (
+            f"{path.relative_to(ROOT)} repeats an exemplar scene: {scene_ids}")
+        if len(headings) > 1:
+            assert text.rindex("```exemplar ") < headings[1], (
+                f"{path.relative_to(ROOT)} carries an exemplar fence outside its opening "
+                "section; every witness sits where the reader meets the first one")
+        # The first fence is the canonical exemplar the file opens with; any
+        # later fence is a further witness of the same surface (a compact end
+        # beside an upper one), held to the same corpus copy, the same surface,
+        # and the same positive kind -- a counter-exemplar never sits on the
+        # generation path.
+        for scene_id, body in found:
+            scene = scenes.get(scene_id)
+            assert scene is not None, (
+                f"{path.relative_to(ROOT)} names scene {scene_id!r}, absent from the corpus")
+            assert scene["surface"] == surface, (
+                f"{path.relative_to(ROOT)} carries a {scene['surface']!r} exemplar")
+            assert scene["kind"] == "positive", (
+                f"{path.relative_to(ROOT)} carries a {scene['kind']} exemplar ({scene_id})")
+            assert _normalized(body) == _normalized(scene["answer"]), (
+                f"{path.relative_to(ROOT)} and the witness copy of {scene_id!r} have drifted; "
+                "one of the two was edited alone and they are no longer one exemplar")
 
 
 def test_no_other_document_carries_an_exemplar_block():
