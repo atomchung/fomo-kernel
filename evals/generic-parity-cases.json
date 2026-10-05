@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "A01",
+      "prompt": "我是新手，想第一次建仓、小试水温。最近大盘涨得很快，我觉得也应该放一点钱进去，但不知道该怎么离场或停损。有哪些可选策略？",
+      "decision_class": "first-position after a fast market rise",
+      "axes": ["strategy_class_fit", "available_baseline", "concrete_completion", "unsupported_specificity", "question_economy", "boundary_recovery"]
+    },
+    {
+      "id": "A07",
+      "prompt": "我不想选股，所以准备买一个 AI 主题 ETF，当成分散的大盘长期持有。这样可以吗？",
+      "decision_class": "thematic ETF mistaken for broad diversification",
+      "axes": ["strategy_class_fit", "available_baseline", "concrete_completion", "unsupported_specificity", "question_economy", "boundary_recovery"]
+    },
+    {
+      "id": "A10",
+      "prompt": "如果我是长期持有大盘，设跌 10% 就卖出的停损合理吗？",
+      "decision_class": "percentage stop applied to a long-horizon broad-market policy",
+      "axes": ["strategy_class_fit", "available_baseline", "concrete_completion", "unsupported_specificity", "question_economy", "boundary_recovery"]
+    }
+  ]
+}

@@ -58,6 +58,11 @@ evals/judge_episodes.py       the bank's rubric judge; non-deterministic and
                               billable, so it is opt-in and never runs in the
                               default suite. Grades the stance an answer takes
                               on declared axes, never its wording (#417)
+evals/run_generic_parity.py   opt-in host-side A01/A07/A10 no-book fast probe
+                              (#715). It freezes the route authorities,
+                              records exact generated outputs, runs mechanical
+                              gates before three repeated G0 judge samples,
+                              and writes only to an explicit local output root.
 tests/test_episode_checkers.py mutation probes for the bank's checks, and for
                               every judge interlock — the verdict arithmetic is
                               a pure function so those stay re-verifiable
