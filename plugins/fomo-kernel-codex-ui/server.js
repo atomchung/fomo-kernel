@@ -92,7 +92,7 @@ export function createFomoProbeServer() {
         + "and returns that canonical value in its structured result. The widget calls it on a click; it is not "
         + "meant to be called from conversation. It writes nothing: no review answer, no session, no file.",
       inputSchema: {
-        locale: localeSchema.describe("Copy language of the confirmation text: zh-TW or en."),
+        locale: localeSchema.describe("Locale of the demo surface the click came from: zh-TW or en. It is echoed back in the result and changes no text."),
         question_id: z.literal("codex_ui_probe_choice").describe("The only demo question; any other id is rejected."),
         choice: z.enum(["rule_a", "rule_b"]).describe("The clicked option's canonical value.")
       },
