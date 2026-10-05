@@ -489,7 +489,7 @@ This step ends **one route run**, not the conversation. Archive is not a stop si
 
 ### Step 6 — Convert every miss into a replayable episode (gate 7, the last step before the verdict)
 
-**`archive-receipt` enforces this step**: a receipt with no `findings_recorded` row cannot be archived, so converting a miss is part of the walkthrough rather than a wrap-up chore. An issue records that something went wrong; only an episode makes it replayable (#417).
+**`archive-receipt` enforces this step**: a receipt with no `findings_recorded` row cannot be archived, so recording where each miss went is part of the walkthrough rather than a wrap-up chore. An issue records that something went wrong; only an episode makes it replayable (#417).
 
 Convert each miss into an episode **on the spot**, as you find it, rather than batching them at wrap-up: the agent's exact wording is the asset, and it is gone by the next session.
 
