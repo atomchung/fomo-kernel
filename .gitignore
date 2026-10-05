@@ -33,3 +33,13 @@ card-public.*
 
 # Generated Claude Design bundle (rebuild with tools/design_bundle.py)
 skills/fomo-kernel/tools/ds-bundle/
+
+# Ad-hoc QA scratch root. A dogfood or grounding run started with an inline
+# TRADE_COACH_HOME under the repository (rather than an isolated one outside
+# it, per docs/qa-runbook.md) drops whole coach homes here -- `.tmp_qa/home/`
+# and `.tmp_qa/dogfood/` each held ledger.jsonl, theses.jsonl, revisit.jsonl,
+# rules.jsonl, projections and rendered cards. `ledger.jsonl` and `card-*`
+# above already net two of those files; this nets the rest of the tree, which
+# carries the same tickers, amounts and dates. No leading slash: matches at
+# any path depth.
+.tmp_qa/
