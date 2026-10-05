@@ -56,8 +56,17 @@ export function createFomoProbeServer() {
       `fomo_show_demo_${kind}`,
       {
         title: kind === "card" ? "Show demo review card" : "Show demo review question",
-        description: "Demo-only UI probe. It never reads fomo-kernel sessions or card artifacts.",
-        inputSchema: { locale: localeSchema },
+        description: kind === "card"
+          ? "Renders the fixed synthetic demo review card in the host's widget surface, in the requested locale. "
+            + "Use it to verify that a styled card can appear inline in this host at all. The card is synthetic copy "
+            + "with no user, session, or ledger data; every call returns the same surface, and nothing is read from "
+            + "fomo-kernel sessions, ledgers, or card artifacts. It cannot show a real review card."
+          : "Renders the fixed synthetic demo review question with two clickable options in the host's widget "
+            + "surface, in the requested locale. Use it to verify that a click can reach a tool and return one "
+            + "canonical option value; the widget calls fomo_submit_demo_choice on a click. The question is "
+            + "synthetic copy, every call returns the same surface, and nothing is read from fomo-kernel sessions "
+            + "or answers. It cannot ask a real review question.",
+        inputSchema: { locale: localeSchema.describe("Copy language for the synthetic surface: zh-TW or en.") },
         outputSchema: {
           demo: z.literal(true),
           locale: localeSchema,
@@ -79,11 +88,13 @@ export function createFomoProbeServer() {
     "fomo_submit_demo_choice",
     {
       title: "Submit demo choice",
-      description: "Returns the selected canonical demo value. It does not write a review answer.",
+      description: "Records which of the two synthetic demo options the user clicked for the fixed demo question "
+        + "and returns that canonical value in its structured result. The widget calls it on a click; it is not "
+        + "meant to be called from conversation. It writes nothing: no review answer, no session, no file.",
       inputSchema: {
-        locale: localeSchema,
-        question_id: z.literal("codex_ui_probe_choice"),
-        choice: z.enum(["rule_a", "rule_b"])
+        locale: localeSchema.describe("Locale of the demo surface the click came from: zh-TW or en. It is echoed back in the result and changes no text."),
+        question_id: z.literal("codex_ui_probe_choice").describe("The only demo question; any other id is rejected."),
+        choice: z.enum(["rule_a", "rule_b"]).describe("The clicked option's canonical value.")
       },
       outputSchema: {
         demo: z.literal(true),

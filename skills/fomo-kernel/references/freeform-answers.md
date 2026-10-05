@@ -134,9 +134,7 @@ conversation does not loosen that default, and only `card-public.md` is
 share-safe, on request.
 
 **Positions view.** Trigger: the user asks, in freeform conversation, to see
-their current holdings or positions. Shape, revised by owner ruling
-2026-07-30 (#561) from the original four-column table into the richer,
-already-demoed one: one row per held ticker — ticker, shares, avg cost,
+their current holdings or positions. Shape (#561): one row per held ticker — ticker, shares, avg cost,
 current value, $ P&L, and the sizing / averaging-down / exit-discipline /
 hold-consistency diagnosis tags — sorted by size (largest |$ P&L impact|
 first), exactly the "Per-position diagnosis" section README.md's "What it
@@ -199,8 +197,8 @@ text-first default is a **latency** preference about how much work to do before
 answering; it is not a shape, it never was, and reading it as one is how a
 surface acquires a second answer-shape rule.
 
-Since #830, *where* they go is a rule rather than a free choice. A fact lives
-on exactly one floor (D7): the facts that decide the call open the body, a
+*Where* they go is a rule, not a free choice (D7). A fact lives on exactly one
+floor: the facts that decide the call open the body, a
 truth-critical qualifier stays beside its number, and everything else material
 — sources and as-of, which book, which session, a degraded price, a gap that
 could change the recommendation — collects into **one compact end block, one
@@ -246,11 +244,10 @@ line count. The review card's footnote remains that surface's own layout.
 **Obligation selection is still per-route.** What the card owes comes from
 `build_honesty_ledger()`; what a `consider` answer owes comes from its
 `challenge` block (`trade-consequence.md`, "What the answer owes"), computed
-per call — and since #830 that block separates what an answer owes from what
-it merely *has*, so "available in the payload" is no longer a reason to say
-something. Every *other* ad hoc question in this file's opening paragraph —
+per call — and that block separates what an answer owes from what it merely
+*has*, so "available in the payload" is not a reason to say something. Every *other* ad hoc question in this file's opening paragraph —
 "what's my portfolio worth", "how much cash do I have" — has no engine-computed
-obligation list of its own, and #823 did not build one. Those answers inherit
+obligation list of its own. Those answers inherit
 the placement rules above and select their own disclosures from what the engine
 response they read actually carried.
 

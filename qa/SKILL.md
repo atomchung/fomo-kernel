@@ -129,7 +129,7 @@ Confirm with the user which one to simulate; default to "brand-new user" when un
 | **Mock persona** | `mock/<persona>.csv` inside the worktree (see `mock/SAMPLES.md`, e.g. `sample_ai_holder`, `sample_tw_mixed`) | Fast, zero privacy risk, reproducible |
 | **Test-drive** | `--test-drive` (no CSV) | Demonstration only; `persist:false`, zero writes, isolated root |
 
-The real trade file currently holds roughly 1,125 rows across 76 symbols, mixing Taiwanese and US markets and mixed date formats — good stress-test material.
+The real trade file mixes Taiwanese and US markets and mixed date formats — good stress-test material.
 
 ### Step 4 — Walk through (follow the product's fixed lifecycle; do not rewrite it)
 
@@ -412,7 +412,7 @@ Archive the two receipts separately. The refresh and the review that follows it 
 2. **`--language` follows the conversation language**: a Chinese conversation always uses `--language zh-TW` (stated in the product `SKILL.md`'s Language section; forcing `en` in the 2026-07-20 mock session caused the mixed-language output in #262).
 3. **Measure "answered → card"**: the timestamp gap from `answers_received` to the preview `card_presented` is the machine wait in seconds, and it must be reported at wrap-up (#236's re-measurement instrument; `tools/ux_receipt.py --help` is authoritative for events and timestamps).
 
-The complete event sequence lives in the product's `references/interaction-delivery.md` (**arguments per `tools/ux_receipt.py --help`** — the docs drift occasionally; `start --required-question`, for instance, no longer exists in the code). **What fomo-qa changes is promoting this step from "the product recommends it" to "QA cannot skip it"**, because without a receipt this dogfood leaves no machine-readable evidence and cannot enter eval.
+The complete event sequence lives in the product's `references/interaction-delivery.md` (**arguments per `tools/ux_receipt.py --help`**, which is authoritative over any example written in prose). **What fomo-qa changes is promoting this step from "the product recommends it" to "QA cannot skip it"**, because without a receipt this dogfood leaves no machine-readable evidence and cannot enter eval.
 
 **Known `ux_receipt.py` CLI traps** (2026-07-21; two consecutive walkthroughs hit one each, recorded so they are not repeated):
 - `artifact_generated` must come **before** the `card_presented` of the same stage, and be recorded the moment the action happens. Backfilling it later — even with correct content — is still judged by `verify` as "card was marked presented before its artifact existed", and an append-only trace has no way back: the session can only be voided and redone. Do not defer receipt-writing to the end of the walkthrough.
@@ -489,7 +489,7 @@ This step ends **one route run**, not the conversation. Archive is not a stop si
 
 ### Step 6 — Convert every miss into a replayable episode (gate 7, the last step before the verdict)
 
-**This step was added to this skill only on 2026-07-27, and it patched a hole that had really happened**: the repo's `docs/qa-runbook.md` added step 6 on 2026-07-26, but this skill stopped at Step 5 and still wrapped up with "open an issue + add a row to EVALS.md" — exactly the old behavior #417 was meant to replace. The word "episode" appeared zero times anywhere in this skill directory. The rule was written in three repo documents and reached none of the buttons you actually press, so it had never once been executed. **Do not let it fall back to "do it if you remember" — `archive-receipt` now enforces it.**
+**`archive-receipt` enforces this step**: a receipt with no `findings_recorded` row cannot be archived, so recording where each miss went is part of the walkthrough rather than a wrap-up chore. An issue records that something went wrong; only an episode makes it replayable (#417).
 
 Convert each miss into an episode **on the spot**, as you find it, rather than batching them at wrap-up: the agent's exact wording is the asset, and it is gone by the next session.
 
