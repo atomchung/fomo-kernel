@@ -9,11 +9,11 @@ It is not a minimum length, a default answer size, or permission to narrate
 research that does not change the call. The second is the **compact
 witness**: a simple lookup looks like it, and is not inflated.
 
-It is copied verbatim from `tests/agent/expression-witnesses.json`, scene
-`freeform_research_depth` — the corpus that
+Both are copied verbatim from `tests/agent/expression-witnesses.json`, scenes
+`freeform_research_depth` and `freeform_cash_question` — the corpus that
 §3.5 of the repository's expression contract (`docs/expression-contract.md`) makes the
-binding statement of this shape. Every issuer and source in it is invented,
-and `tests/test_expression_contract.py` fails if the two copies disagree.
+binding statement of this shape. Every issuer and source in them is invented,
+and `tests/test_expression_contract.py` fails if either copy disagrees with the corpus.
 
 ```exemplar freeform_research_depth
 不要照原尺寸加 WDGT：這筆會把部位從 28.6% 推到 32.4%，先跨過你自己寫的 30% 上限，而收購的價值仍取決於尚未驗證的融資與整合。

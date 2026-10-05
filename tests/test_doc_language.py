@@ -963,9 +963,10 @@ def markdown_section(text, heading):
 def exemplar_quoted_lines(rel, lines):
     """1-based line numbers holding product output quoted verbatim (#834).
 
-    The four surface references open with one canonical exemplar copied from
-    `tests/agent/expression-witnesses.json`, and three of the four are this
-    product speaking Traditional Chinese. That text is an answer, not
+    The four surface references open with a canonical exemplar copied from
+    `tests/agent/expression-witnesses.json` (freeform carries a second, compact
+    witness after it), and three of the four are this product speaking
+    Traditional Chinese. That text is an answer, not
     documentation prose -- the same distinction that keeps `copy/zh-TW.json`
     out of `ENGLISH_IMPLEMENTATION_ASSETS` -- so the English-only gate skips
     it and keeps reading every other line of the file.

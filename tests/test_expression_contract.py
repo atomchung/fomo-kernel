@@ -317,6 +317,58 @@ def _exemplars(text):
             for match in EXEMPLAR_FENCE.finditer(text)]
 
 
+# #851: how many exemplar fences one surface reference may carry. #834 pinned
+# exactly one per surface; #836 asked for a second, compact witness beside
+# freeform's research-depth upper bound and for nothing on the other three
+# surfaces until the owner-live rerun shows the freeform slice helps. So the
+# allowance is one unless an owner decision says otherwise, and a fence past it
+# is a decision to make, not an edit to slip in.
+WITNESS_ALLOWANCE = {"freeform": 2}
+
+
+def _assert_witnesses(label, text, surface, scenes):
+    """The rules one surface reference's exemplar fences keep (#834, #851).
+
+    A pure function of the file text, so `test_witness_rules_are_enforced` can
+    hand it mutated copies without writing a file. Raises AssertionError naming
+    the first rule broken. The first fence is the canonical exemplar the file
+    opens with; any later fence is a further witness of the same surface (a
+    compact end beside an upper one), held to the same corpus copy, the same
+    surface, and the same positive kind -- a counter-exemplar never sits on the
+    generation path.
+    """
+    found = _exemplars(text)
+    assert found, f"{label} carries no exemplar block"
+    allowed = WITNESS_ALLOWANCE.get(surface, 1)
+    assert len(found) <= allowed, (
+        f"{label} carries {len(found)} exemplar blocks; the {surface!r} surface "
+        f"allows {allowed}")
+    headings = [match.start() for match in re.finditer(r"^## ", text, re.M)]
+    fence = text.index("```exemplar ")
+    assert headings and headings[0] < fence and (
+        len(headings) == 1 or fence < headings[1]), (
+        f"{label} does not open with its exemplar; progressive "
+        "disclosure only helps if the example is what the reader meets first")
+    scene_ids = [scene_id for scene_id, _body in found]
+    assert len(scene_ids) == len(set(scene_ids)), (
+        f"{label} repeats an exemplar scene: {scene_ids}")
+    if len(headings) > 1:
+        assert text.rindex("```exemplar ") < headings[1], (
+            f"{label} carries an exemplar fence outside its opening "
+            "section; every witness sits where the reader meets the first one")
+    for scene_id, body in found:
+        scene = scenes.get(scene_id)
+        assert scene is not None, (
+            f"{label} names scene {scene_id!r}, absent from the corpus")
+        assert scene["surface"] == surface, (
+            f"{label} carries a {scene['surface']!r} exemplar")
+        assert scene["kind"] == "positive", (
+            f"{label} carries a {scene['kind']} exemplar ({scene_id})")
+        assert _normalized(body) == _normalized(scene["answer"]), (
+            f"{label} and the witness copy of {scene_id!r} have drifted; "
+            "one of the two was edited alone and they are no longer one exemplar")
+
+
 def test_every_surface_reference_opens_with_its_canonical_exemplar():
     """#834. Before it, the exemplars existed only in the QC layer: the model
     never saw one while generating, and prose norms alone did not bind scale.
@@ -336,38 +388,55 @@ def test_every_surface_reference_opens_with_its_canonical_exemplar():
             "exactly one owns it")
         path = REFERENCES / named[0]
         assert path.is_file(), f"surface {surface!r} names a missing file: {named[0]}"
-        text = path.read_text(encoding="utf-8")
-        found = _exemplars(text)
-        assert found, f"{path.relative_to(ROOT)} carries no exemplar block"
-        headings = [match.start() for match in re.finditer(r"^## ", text, re.M)]
-        fence = text.index("```exemplar ")
-        assert headings and headings[0] < fence and (
-            len(headings) == 1 or fence < headings[1]), (
-            f"{path.relative_to(ROOT)} does not open with its exemplar; progressive "
-            "disclosure only helps if the example is what the reader meets first")
-        scene_ids = [scene_id for scene_id, _body in found]
-        assert len(scene_ids) == len(set(scene_ids)), (
-            f"{path.relative_to(ROOT)} repeats an exemplar scene: {scene_ids}")
-        if len(headings) > 1:
-            assert text.rindex("```exemplar ") < headings[1], (
-                f"{path.relative_to(ROOT)} carries an exemplar fence outside its opening "
-                "section; every witness sits where the reader meets the first one")
-        # The first fence is the canonical exemplar the file opens with; any
-        # later fence is a further witness of the same surface (a compact end
-        # beside an upper one), held to the same corpus copy, the same surface,
-        # and the same positive kind -- a counter-exemplar never sits on the
-        # generation path.
-        for scene_id, body in found:
-            scene = scenes.get(scene_id)
-            assert scene is not None, (
-                f"{path.relative_to(ROOT)} names scene {scene_id!r}, absent from the corpus")
-            assert scene["surface"] == surface, (
-                f"{path.relative_to(ROOT)} carries a {scene['surface']!r} exemplar")
-            assert scene["kind"] == "positive", (
-                f"{path.relative_to(ROOT)} carries a {scene['kind']} exemplar ({scene_id})")
-            assert _normalized(body) == _normalized(scene["answer"]), (
-                f"{path.relative_to(ROOT)} and the witness copy of {scene_id!r} have drifted; "
-                "one of the two was edited alone and they are no longer one exemplar")
+        _assert_witnesses(str(path.relative_to(ROOT)),
+                          path.read_text(encoding="utf-8"), surface, scenes)
+
+
+def test_witness_rules_are_enforced():
+    """Mutation proof for the widened gate above (#851): every rule
+    `_assert_witnesses` states is broken once, on a synthetic reference built
+    from the corpus's own scenes, and must fail with that rule's own message;
+    the unbroken references must pass. A checker that stays green under the
+    mutation it exists to catch is not evidence, and #851 widened this one from
+    "exactly one fence" to a bounded set."""
+    scenes = {scene["id"]: scene for scene in _corpus()["scenes"]}
+    upper, compact = "freeform_research_depth", "freeform_cash_question"
+
+    def fence(scene_id, body=None):
+        answer = scenes[scene_id]["answer"] if body is None else body
+        return f"```exemplar {scene_id}\n{answer}\n```\n"
+
+    def reference(opening, later=""):
+        return f"# Title\n\n## The exemplars\n\n{opening}\n## Later\n\n{later}\n"
+
+    # What stays legal: the full allowance, less than it, and one fence anywhere else.
+    _assert_witnesses("two", reference(fence(upper) + "\n" + fence(compact)), "freeform", scenes)
+    _assert_witnesses("one", reference(fence(upper)), "freeform", scenes)
+    _assert_witnesses("consider", reference(fence("consider_no_material_change")), "consider", scenes)
+
+    mutants = {
+        "carries no exemplar block": (reference("prose only\n"), "freeform"),
+        "allows 2": (reference(fence(upper) + "\n" + fence(compact) + "\n"
+                               + fence("freeform_positions_view")), "freeform"),
+        "allows 1": (reference(fence("consider_no_material_change") + "\n"
+                               + fence("consider_funding_shortfall")), "consider"),
+        "does not open with its exemplar": (
+            "# Title\n\n" + fence(upper) + "\n## The exemplars\n\ntext\n\n## Later\n", "freeform"),
+        "repeats an exemplar scene": (reference(fence(upper) + "\n" + fence(upper)), "freeform"),
+        "outside its opening section": (reference(fence(upper), later=fence(compact)), "freeform"),
+        "carries a 'consider' exemplar": (reference(fence("consider_no_material_change")), "freeform"),
+        "carries a negative exemplar": (reference(fence("restated_point")), "consider"),
+        "absent from the corpus": (
+            reference(fence(upper) + "\n```exemplar freeform_not_a_scene\nx\n```\n"), "freeform"),
+        "have drifted": (reference(fence(upper, scenes[upper]["answer"] + "!")), "freeform"),
+    }
+    for fragment, (text, surface) in mutants.items():
+        try:
+            _assert_witnesses("mutant", text, surface, scenes)
+        except AssertionError as exc:
+            assert fragment in str(exc), f"expected {fragment!r}, the gate said: {exc}"
+        else:
+            raise AssertionError(f"mutation not caught by the gate: {fragment}")
 
 
 def test_no_other_document_carries_an_exemplar_block():
@@ -554,6 +623,7 @@ def main():
         test_every_surface_reference_opens_with_its_canonical_exemplar,
         test_no_other_document_carries_an_exemplar_block,
         test_exemplar_drift_is_caught,
+        test_witness_rules_are_enforced,
         test_fixed_topics_stay_within_their_declared_ceiling,
         test_no_owed_fact_is_a_duplicate_another_could_absorb,
         test_the_owed_floor_stayed_smaller_than_the_whole_inventory,
