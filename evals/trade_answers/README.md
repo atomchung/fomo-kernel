@@ -143,8 +143,7 @@ Each durable receipt records separate source-fixture, candidate, judge-contract,
 and per-answer exact judge-input digests as applicable. It also keeps the exact
 candidate artifact for `candidate_output` and a content-addressed copy of every
 canonical judge call specification. The latter includes the complete prompt or
-structured messages plus model, effort, token budget, tool schema, forced tool
-choice, CLI argv, retry count, and timeout where applicable. Deleting the
+structured messages plus model, effort, token budget, output schema, CLI argv, retry count, and timeout where applicable. Deleting the
 temporary candidate file therefore does not erase what the deterministic gate
 or model saw, and a transport-option change cannot masquerade as the same run.
 These copies remain in the private local coach root; they are not committed.

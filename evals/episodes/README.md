@@ -65,7 +65,7 @@ the point, not a cost saving: a Claude judge shares Claude's priors about what
 good reasoning looks like. **`anthropic`** is the portable route — any maintainer
 with their own key can run it, including in CI on a checkout that knows nothing
 about one person's machine — and it guarantees the response *shape* through
-forced tool use, which a CLI cannot.
+structured outputs (a JSON output schema), which a CLI cannot.
 
 That missing guarantee is what `_parse_verdicts` replaces, and it fails closed in
 three directions: a reply carrying no readable JSON is `None`, a reply answering

@@ -292,8 +292,8 @@ def test_adapter_injects_its_system_rubric_and_material_into_shared_backend():
     assert prompt.startswith(judge.SYSTEM)
     assert judge.RUBRIC["decision_focus"]["holds"] in prompt
     assert "THE FROZEN TRADE EVALUATION" in prompt
-    tool = judge.BASE._tool(judge.AXES, rubric=judge.RUBRIC)
-    assert tool["input_schema"]["properties"]["decision_focus"]["properties"] \
+    schema = judge.BASE._output_schema(judge.AXES, rubric=judge.RUBRIC)
+    assert schema["properties"]["decision_focus"]["properties"] \
         ["verdict"]["description"] == judge.RUBRIC["decision_focus"]["one_line"]
 
 
@@ -460,12 +460,13 @@ def test_receipt_digests_bind_both_fixture_and_judge_contract():
         episode, answer, judge.AXES, backend="anthropic", model="model-a")
     call = structured["call_spec"]
     assert call["max_tokens"] == judge.BASE.STRUCTURED_MAX_TOKENS
-    assert call["output_config"] == {"effort": judge.BASE.EFFORT}
-    assert call["tool_choice"] == judge.BASE.STRUCTURED_TOOL_CHOICE
+    assert call["output_config"]["effort"] == judge.BASE.EFFORT
+    assert call["output_config"]["format"]["type"] == "json_schema"
+    assert "tool_choice" not in call and "tools" not in call
     assert call["messages"][0]["content"]
 
     original_tokens = judge.BASE.STRUCTURED_MAX_TOKENS
-    original_choice = judge.BASE.STRUCTURED_TOOL_CHOICE
+    original_effort = judge.BASE.EFFORT
     try:
         baseline = judge.judge_input_digest(
             episode, answer, judge.AXES, backend="anthropic", model="model-a")
@@ -474,14 +475,13 @@ def test_receipt_digests_bind_both_fixture_and_judge_contract():
             episode, answer, judge.AXES, backend="anthropic", model="model-a") \
             != baseline
         judge.BASE.STRUCTURED_MAX_TOKENS = original_tokens
-        judge.BASE.STRUCTURED_TOOL_CHOICE = {
-            "type": "tool", "name": "different_tool"}
+        judge.BASE.EFFORT = "low" if original_effort != "low" else "high"
         assert judge.judge_input_digest(
             episode, answer, judge.AXES, backend="anthropic", model="model-a") \
             != baseline
     finally:
         judge.BASE.STRUCTURED_MAX_TOKENS = original_tokens
-        judge.BASE.STRUCTURED_TOOL_CHOICE = original_choice
+        judge.BASE.EFFORT = original_effort
 
 
 def test_receipt_store_is_durable_readable_and_refuses_corruption():
