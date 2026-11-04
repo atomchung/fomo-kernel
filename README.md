@@ -92,7 +92,7 @@ Per-position diagnosis (sorted by size; small lots not nitpicked):
   ORCL   +$1,658   [v] disciplined hold: +22%
   AMD    -$1,000   --  roughly neutral
 
-[v] What you did right: you averaged down twice, but both times stayed within your position cap — no ticker got averaged into an oversized position
+[v] What you did right: you added to losing positions 2 times, and before each add that position was at most 25% of your total cost basis
 [X] Biggest leak: position sizing — largest single lot PLTR is 50%, the rest average 17%
 [*] Change only this next time: hard-cap any single position at 20% — trim if it goes over
 ```

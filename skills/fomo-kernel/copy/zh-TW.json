@@ -341,7 +341,7 @@
     "no_signal": "這期沒有足夠強的正向訊號；先把注意力留給最大的洞。",
     "exit_discipline": "該獲利了結時你不手軟：賣掉的賺錢單只有 {winner_early} 事後繼續漲，代表你不會「抱著賺錢的捨不得賣、結果回吐」",
     "position_sizing": "單筆部位有控制：押最重的一檔也只佔 {max_pct}，沒把身家壓在一檔上",
-    "averaging_down": "你往下加碼 {count} 次，卻都守在自己的部位上限內、沒讓任何一檔越攤越重{example}",
+    "averaging_down": "你往下加碼 {count} 次，每次加碼前該檔都不超過持倉總成本的 25%{example}",
     "averaging_down_example": "(例:{ticker})",
     "diversification": "{n} 檔分布在不同驅動因子，沒有全押在同一個故事上",
     "holding_period": "進出有一致的節奏：中位持有 {median_hold} 天，不是隨機亂買亂賣"

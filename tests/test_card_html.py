@@ -1462,6 +1462,114 @@ def test_snapshot_overview_and_strength_copy_is_pinned_in_rendered_output():
 # each and none of them had a pin before.
 
 
+AVERAGING_DOWN_COUNT = 3
+
+
+def _averaging_down_card(tickers, tagged=(), sizing=None):
+    """A card whose only strength is the averaging-down one, with the flags
+    under test. ``tagged`` is ``(ticker, tag code)`` pairs on ``ticker_diagnosis``;
+    ``sizing`` is the fields of a position-sizing row. Its ``max_pct`` default
+    sits far above the sizing strength's bar, so that strength never competes."""
+    dims = [{"dim": "加碼攤平", "breach": 0, "count": AVERAGING_DOWN_COUNT,
+             "tickers": list(tickers)}]
+    if sizing is not None:
+        dims.append({"dim": "部位 sizing", "max_pct": 0.58, **sizing})
+    return {"strength": None, "dims_raw": dims,
+            "ticker_diagnosis": [{"ticker": ticker, "impact": 1000.0,
+                                  "tags": [{"code": code, "params": {}}]}
+                                 for ticker, code in tagged]}
+
+
+def _averaging_down_sentence(language, example_ticker):
+    """The averaging-down strength as the catalog words it, built from the
+    catalog itself so the test pins the choice of ticker and not the wording
+    (the corpus golden owns the wording). ``None`` -> the sentence without an
+    example."""
+    copy = card_renderer.load_copy(language)["best_strength"]
+    example = (copy["averaging_down_example"].format(ticker=example_ticker)
+               if example_ticker else "")
+    return copy["averaging_down"].format(count=AVERAGING_DOWN_COUNT, example=example)
+
+
+def test_averaging_down_strength_does_not_cite_a_name_the_card_calls_too_heavy():
+    """The strength's example is offered as proof of staying small while
+    averaging down, so it must never be a ticker the same card calls too heavy.
+    The card has two ways of saying so -- a ``too_heavy`` tag on its
+    ``ticker_diagnosis`` row, and being the triggered position-sizing row's
+    ``max_ticker`` -- and each excludes a name on its own. The example is the
+    first remaining ticker in engine order; a card that flags nothing keeps
+    ``tickers[0]``; and a card that flags every name renders the sentence with
+    no example at all."""
+    tickers = ("AAA", "BBB", "CCC")
+
+    def heavy(*names):
+        return tuple((name, "too_heavy") for name in names)
+
+    def sized(ticker, **row):
+        return {"applicable": True, "triggered": True, "max_ticker": ticker, **row}
+
+    cases = (
+        ("flags nothing keeps the first name", {}, "AAA"),
+        ("a too_heavy tag on the first name", {"tagged": heavy("AAA")}, "BBB"),
+        ("the triggered sizing row's max_ticker", {"sizing": sized("AAA")}, "BBB"),
+        ("a tag on a later name leaves the first", {"tagged": heavy("CCC")}, "AAA"),
+        ("tags on the first two names", {"tagged": heavy("AAA", "BBB")}, "CCC"),
+        ("a tag and the sizing row together",
+         {"tagged": heavy("AAA"), "sizing": sized("BBB")}, "CCC"),
+        ("every name flagged, by both sources",
+         {"tagged": heavy("AAA", "CCC"), "sizing": sized("BBB")}, None),
+        ("a different behavior tag flags nothing",
+         {"tagged": (("AAA", "sold_winner_early"),)}, "AAA"),
+        ("an inapplicable sizing row flags nothing",
+         {"sizing": sized("AAA", applicable=False)}, "AAA"),
+        # 23% sits under the 25% trigger yet over the 22% bar of the sizing
+        # strength, so that strength still stays out of the ranking.
+        ("a sizing row that did not trigger flags nothing",
+         {"sizing": sized("AAA", triggered=False, max_pct=0.23)}, "AAA"),
+        ("names outside the averaged list flag nothing",
+         {"tagged": heavy("ZZZ"), "sizing": sized("YYY")}, "AAA"),
+    )
+    for language in ("en", "zh-TW", "zh-CN"):
+        for label, flags, expected in cases:
+            got = card_renderer._best_strength(_averaging_down_card(tickers, **flags), language)
+            want = _averaging_down_sentence(language, expected)
+            assert got == want, (f"{language}: {label}: the example should be {expected!r}\n"
+                                 f"  want: {want!r}\n   got: {got!r}")
+        # Engine order picks among the remaining names, not alphabetical order.
+        reordered = _averaging_down_card(("CCC", "BBB", "AAA"), tagged=heavy("CCC"))
+        got = card_renderer._best_strength(reordered, language)
+        assert got == _averaging_down_sentence(language, "BBB"), \
+            f"{language}: engine order must survive the filter, got {got!r}"
+        # With every name flagged nothing of the example survives: no ticker,
+        # and no trailing space left where its template would have started.
+        bare = card_renderer._best_strength(
+            _averaging_down_card(tickers, tagged=heavy(*tickers)), language)
+        assert not any(name in bare for name in tickers) and bare == bare.rstrip(), \
+            f"{language}: the sentence must end cleanly when no name is eligible: {bare!r}"
+
+
+def test_averaging_down_strength_example_follows_the_flag_on_every_card_surface():
+    """The choice above is only worth anything if the delivery surfaces carry
+    it: the private Markdown and HTML cards show the first unflagged name beside
+    the very flag that excluded the first one, and the share-safe public card
+    never carries a ticker."""
+    tickers = ("AAA", "BBB")
+    flagged = _averaging_down_card(tickers, tagged=(("AAA", "too_heavy"),))
+    for language in ("en", "zh-TW", "zh-CN"):
+        bundle = {"schema_version": 2, "session_id": "t", "language": language,
+                  "engine_card": flagged, "review_plan": {},
+                  "narrative": {"headline": "Headline.", "mirror": "Mirror."}}
+        want = _averaging_down_sentence(language, "BBB")
+        stale = _averaging_down_sentence(language, "AAA")
+        private = card_renderer.render_private(bundle)
+        card_html = card_renderer.render_html(bundle)
+        assert want in private and stale not in private, f"{language}: private Markdown"
+        assert html.escape(want) in card_html and html.escape(stale) not in card_html, \
+            f"{language}: HTML card"
+        public = card_renderer.render_public(bundle)
+        assert not any(name in public for name in tickers), f"{language}: public card"
+
+
 def test_snapshot_route_renders_cash_stress_and_instrument_facts_the_adapter_supplies():
     """#771 second half (renderer side; the adapter side landed in #788/09f9bd7).
 
@@ -2451,6 +2559,8 @@ def main():
         test_instrument_tag_price_note_stays_inline_without_growing_the_row,
         test_locale_copy_files_keep_key_parity,
         test_snapshot_overview_and_strength_copy_is_pinned_in_rendered_output,
+        test_averaging_down_strength_does_not_cite_a_name_the_card_calls_too_heavy,
+        test_averaging_down_strength_example_follows_the_flag_on_every_card_surface,
         test_snapshot_route_renders_cash_stress_and_instrument_facts_the_adapter_supplies,
         test_rule_grounding_sub_line_private_surfaces_only,
         test_preview_emits_html_and_finalize_cleans_pending,
