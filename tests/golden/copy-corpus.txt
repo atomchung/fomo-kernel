@@ -13916,7 +13916,7 @@ Mirror.
 
 ## 風險與問題
 
-[v] 你做對的一件事：你往下加碼 3 次，卻都守在自己的部位上限內、沒讓任何一檔越攤越重(例:AAA)
+[v] 你做對的一件事：你往下加碼 3 次，每次加碼前該檔都不超過持倉總成本的 25%(例:AAA)
 
 ## 下一步
 
@@ -13938,7 +13938,7 @@ Mirror.
 本期沒有可排序的標的層診斷。
 風險與問題
 你做對的一件事
-你往下加碼 3 次，卻都守在自己的部位上限內、沒讓任何一檔越攤越重(例:AAA)
+你往下加碼 3 次，每次加碼前該檔都不超過持倉總成本的 25%(例:AAA)
 下一步
 下次只改這一件
 這次沒有新的規矩承諾；下次復盤可再選一條。
@@ -13983,7 +13983,7 @@ Mirror.
 
 ## 风险与问题
 
-[v] 你做对的一件事：你往下加码 3 次，却都守在自己的部位上限内、没让任何一档越摊越重(例:AAA)
+[v] 你做对的一件事：你往下加码 3 次，每次加码前该档都不超过持仓总成本的 25%(例:AAA)
 
 ## 下一步
 
@@ -14005,7 +14005,7 @@ Mirror.
 本期没有可排序的标的层诊断。
 风险与问题
 你做对的一件事
-你往下加码 3 次，却都守在自己的部位上限内、没让任何一档越摊越重(例:AAA)
+你往下加码 3 次，每次加码前该档都不超过持仓总成本的 25%(例:AAA)
 下一步
 下次只改这一件
 这次没有新的规矩承诺；下次复盘可再选一条。
@@ -14050,7 +14050,7 @@ No ranked instrument diagnosis this period.
 
 ## Risks and problems
 
-[v] One thing you did well: you added down 3 times and still stayed inside your own position limit, never letting one name grow heavy on the way down (for example AAA)
+[v] One thing you did well: you added to losing positions 3 times, and before each add that position was at most 25% of your total cost basis (for example AAA)
 
 ## Next step
 
@@ -14072,7 +14072,7 @@ Key trades · ranked by money impact
 No ranked instrument diagnosis this period.
 Risks and problems
 One thing you did well
-you added down 3 times and still stayed inside your own position limit, never letting one name grow heavy on the way down (for example AAA)
+you added to losing positions 3 times, and before each add that position was at most 25% of your total cost basis (for example AAA)
 Next step
 Change only this next time
 No new rule commitment this time; you can pick one at the next review.
@@ -14922,7 +14922,7 @@ Mirror.
 
 ## 風險與問題
 
-[v] 你做對的一件事：你往下加碼 3 次，卻都守在自己的部位上限內、沒讓任何一檔越攤越重(例:BBB)
+[v] 你做對的一件事：你往下加碼 3 次，每次加碼前該檔都不超過持倉總成本的 25%(例:BBB)
 
 ## 下一步
 
@@ -14945,7 +14945,7 @@ AAA+$1,000⚠押太重：佔組合 58%
 BBB+$900
 風險與問題
 你做對的一件事
-你往下加碼 3 次，卻都守在自己的部位上限內、沒讓任何一檔越攤越重(例:BBB)
+你往下加碼 3 次，每次加碼前該檔都不超過持倉總成本的 25%(例:BBB)
 下一步
 下次只改這一件
 這次沒有新的規矩承諾；下次復盤可再選一條。
@@ -14991,7 +14991,7 @@ Mirror.
 
 ## 风险与问题
 
-[v] 你做对的一件事：你往下加码 3 次，却都守在自己的部位上限内、没让任何一档越摊越重(例:BBB)
+[v] 你做对的一件事：你往下加码 3 次，每次加码前该档都不超过持仓总成本的 25%(例:BBB)
 
 ## 下一步
 
@@ -15014,7 +15014,7 @@ AAA+$1,000⚠押太重：占组合 58%
 BBB+$900
 风险与问题
 你做对的一件事
-你往下加码 3 次，却都守在自己的部位上限内、没让任何一档越摊越重(例:BBB)
+你往下加码 3 次，每次加码前该档都不超过持仓总成本的 25%(例:BBB)
 下一步
 下次只改这一件
 这次没有新的规矩承诺；下次复盘可再选一条。
@@ -15060,7 +15060,7 @@ Mirror.
 
 ## Risks and problems
 
-[v] One thing you did well: you added down 3 times and still stayed inside your own position limit, never letting one name grow heavy on the way down (for example BBB)
+[v] One thing you did well: you added to losing positions 3 times, and before each add that position was at most 25% of your total cost basis (for example BBB)
 
 ## Next step
 
@@ -15083,7 +15083,7 @@ AAA+$1,000too heavy: 58% of the portfolio
 BBB+$900
 Risks and problems
 One thing you did well
-you added down 3 times and still stayed inside your own position limit, never letting one name grow heavy on the way down (for example BBB)
+you added to losing positions 3 times, and before each add that position was at most 25% of your total cost basis (for example BBB)
 Next step
 Change only this next time
 No new rule commitment this time; you can pick one at the next review.
@@ -15133,7 +15133,7 @@ Mirror.
 
 ## 風險與問題
 
-[v] 你做對的一件事：你往下加碼 3 次，卻都守在自己的部位上限內、沒讓任何一檔越攤越重(例:BBB)
+[v] 你做對的一件事：你往下加碼 3 次，每次加碼前該檔都不超過持倉總成本的 25%(例:BBB)
 
 [X] 最大的行為漏洞：你最大一筆 AAA 佔 58%，其餘平均 14%
 
@@ -15158,7 +15158,7 @@ AAA+$1,000
 BBB+$900
 風險與問題
 你做對的一件事
-你往下加碼 3 次，卻都守在自己的部位上限內、沒讓任何一檔越攤越重(例:BBB)
+你往下加碼 3 次，每次加碼前該檔都不超過持倉總成本的 25%(例:BBB)
 最大的行為漏洞
 你最大一筆 AAA 佔 58%，其餘平均 14%
 下一步
@@ -15210,7 +15210,7 @@ Mirror.
 
 ## 风险与问题
 
-[v] 你做对的一件事：你往下加码 3 次，却都守在自己的部位上限内、没让任何一档越摊越重(例:BBB)
+[v] 你做对的一件事：你往下加码 3 次，每次加码前该档都不超过持仓总成本的 25%(例:BBB)
 
 [X] 最大的行为漏洞：你最大一笔 AAA 占 58%，其余平均 14%
 
@@ -15235,7 +15235,7 @@ AAA+$1,000
 BBB+$900
 风险与问题
 你做对的一件事
-你往下加码 3 次，却都守在自己的部位上限内、没让任何一档越摊越重(例:BBB)
+你往下加码 3 次，每次加码前该档都不超过持仓总成本的 25%(例:BBB)
 最大的行为漏洞
 你最大一笔 AAA 占 58%，其余平均 14%
 下一步
@@ -15287,7 +15287,7 @@ Mirror.
 
 ## Risks and problems
 
-[v] One thing you did well: you added down 3 times and still stayed inside your own position limit, never letting one name grow heavy on the way down (for example BBB)
+[v] One thing you did well: you added to losing positions 3 times, and before each add that position was at most 25% of your total cost basis (for example BBB)
 
 [X] The biggest behavioral leak: your largest single position AAA was 58%, against an average of 14% across the rest
 
@@ -15312,7 +15312,7 @@ AAA+$1,000
 BBB+$900
 Risks and problems
 One thing you did well
-you added down 3 times and still stayed inside your own position limit, never letting one name grow heavy on the way down (for example BBB)
+you added to losing positions 3 times, and before each add that position was at most 25% of your total cost basis (for example BBB)
 The biggest behavioral leak
 your largest single position AAA was 58%, against an average of 14% across the rest
 Next step
@@ -15364,7 +15364,7 @@ Mirror.
 
 ## 風險與問題
 
-[v] 你做對的一件事：你往下加碼 3 次，卻都守在自己的部位上限內、沒讓任何一檔越攤越重
+[v] 你做對的一件事：你往下加碼 3 次，每次加碼前該檔都不超過持倉總成本的 25%
 
 [X] 最大的行為漏洞：你最大一筆 AAA 佔 58%，其餘平均 14%
 
@@ -15389,7 +15389,7 @@ AAA+$1,000
 BBB+$900⚠押太重：佔組合 58%
 風險與問題
 你做對的一件事
-你往下加碼 3 次，卻都守在自己的部位上限內、沒讓任何一檔越攤越重
+你往下加碼 3 次，每次加碼前該檔都不超過持倉總成本的 25%
 最大的行為漏洞
 你最大一筆 AAA 佔 58%，其餘平均 14%
 下一步
@@ -15441,7 +15441,7 @@ Mirror.
 
 ## 风险与问题
 
-[v] 你做对的一件事：你往下加码 3 次，却都守在自己的部位上限内、没让任何一档越摊越重
+[v] 你做对的一件事：你往下加码 3 次，每次加码前该档都不超过持仓总成本的 25%
 
 [X] 最大的行为漏洞：你最大一笔 AAA 占 58%，其余平均 14%
 
@@ -15466,7 +15466,7 @@ AAA+$1,000
 BBB+$900⚠押太重：占组合 58%
 风险与问题
 你做对的一件事
-你往下加码 3 次，却都守在自己的部位上限内、没让任何一档越摊越重
+你往下加码 3 次，每次加码前该档都不超过持仓总成本的 25%
 最大的行为漏洞
 你最大一笔 AAA 占 58%，其余平均 14%
 下一步
@@ -15518,7 +15518,7 @@ Mirror.
 
 ## Risks and problems
 
-[v] One thing you did well: you added down 3 times and still stayed inside your own position limit, never letting one name grow heavy on the way down
+[v] One thing you did well: you added to losing positions 3 times, and before each add that position was at most 25% of your total cost basis
 
 [X] The biggest behavioral leak: your largest single position AAA was 58%, against an average of 14% across the rest
 
@@ -15543,7 +15543,7 @@ AAA+$1,000
 BBB+$900too heavy: 58% of the portfolio
 Risks and problems
 One thing you did well
-you added down 3 times and still stayed inside your own position limit, never letting one name grow heavy on the way down
+you added to losing positions 3 times, and before each add that position was at most 25% of your total cost basis
 The biggest behavioral leak
 your largest single position AAA was 58%, against an average of 14% across the rest
 Next step
