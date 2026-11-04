@@ -1474,6 +1474,22 @@ def _hole_line(hole, language):
     return ""
 
 
+def _too_heavy_tickers(card):
+    """Tickers this same card calls too heavy, by either of its two ways of
+    saying so: a ``too_heavy`` tag on a ``ticker_diagnosis`` row, or being the
+    ``max_ticker`` of the position-sizing dimension when that dimension
+    triggered. ``_grounding_dims`` already drops a sizing row the card
+    withdrew, so an inapplicable row flags nothing."""
+    names = [row.get("ticker") for row in (card or {}).get("ticker_diagnosis") or []
+             if isinstance(row, dict)
+             and any(isinstance(tag, dict) and tag.get("code") == "too_heavy"
+                     for tag in row.get("tags") or [])]
+    size_dim = _grounding_dims(card).get("position_sizing") or {}
+    if size_dim.get("triggered"):
+        names.append(size_dim.get("max_ticker"))
+    return {name for name in names if isinstance(name, str) and name}
+
+
 def _best_strength(card, language):
     """The "one thing you did right" line, ranked from the raw dimensions.
 
@@ -1507,7 +1523,11 @@ def _best_strength(card, language):
                                                      max_pct=_pct(max_pct))))
     avg_dim = dims.get("averaging_down") or {}
     if avg_dim.get("breach", 1) == 0 and avg_dim.get("count", 0) >= 2:
-        first = (avg_dim.get("tickers") or [""])[0]
+        # The example vouches for staying small while averaging down, so it must
+        # not be a name this same card calls too heavy: take the first ticker, in
+        # engine order, that it does not. All flagged -> no example.
+        heavy = _too_heavy_tickers(card)
+        first = next((t for t in avg_dim.get("tickers") or [] if t not in heavy), "")
         example = _format_copy(copy.get("averaging_down_example"), ticker=first) if first else ""
         candidates.append((0.65, _format_copy(copy.get("averaging_down"),
                                               count=avg_dim.get("count"),

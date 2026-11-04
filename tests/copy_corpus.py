@@ -234,6 +234,34 @@ def _best_strength(dimension):
     return build
 
 
+def _best_strength_example(tagged=(), heaviest=None):
+    """The averaging-down sentence cites one ticker as proof of staying small,
+    and that ticker must not be one the same card calls too heavy. The card has
+    two ways of saying so, each its own flag source: a `too_heavy` tag on a
+    `ticker_diagnosis` row (`tagged`), and the triggered sizing dimension's
+    `max_ticker` (`heaviest`), which also leads the Risks panel. `AAA` comes
+    first in engine order, so flagging it is what moves the example to `BBB`;
+    the card shows its own flag beside the strength line so the golden reads
+    as the contradiction it removes."""
+    def build(language):
+        dims = [dict(BEST_STRENGTH_DIMS["averaging_down"], tickers=["AAA", "BBB"])]
+        sizing = ({"dim": "部位 sizing", "applicable": True, "triggered": True,
+                   "max_ticker": heaviest, "max_pct": 0.58, "avg_pct": 0.14}
+                  if heaviest else None)
+        if sizing:
+            dims.append(sizing)
+        card = {"strength": None, "dims_raw": dims,
+                "ticker_diagnosis": [
+                    {"ticker": ticker, "impact": impact,
+                     "tags": ([{"code": "too_heavy", "params": {"wpct": 0.58}}]
+                              if ticker in tagged else [])}
+                    for ticker, impact in (("AAA", 1000.0), ("BBB", 900.0))]}
+        if sizing:
+            card["top_holes"] = [{"raw": sizing}]
+        return _bundle(language, card=card)
+    return build
+
+
 _ALPHA_BASE = {
     "bench": "SPY", "beta": 2.05, "alpha_ann": 0.33,
     "port_tot": 3.21, "spy_tot": 0.60, "excess_vs_spy": 2.61,
@@ -800,6 +828,16 @@ SCENES = (
     ("best_strength/no_signal", ("best_strength",), _best_strength(None)),
     *[(f"best_strength/{dimension}", (), _best_strength(dimension))
       for dimension in sorted(BEST_STRENGTH_DIMS)],
+    # The averaging-down example never names a ticker the same card calls too
+    # heavy: one scene per flag source, then both sources together flagging every
+    # candidate so the sentence renders with no example and no dangling space or
+    # parentheses.
+    ("best_strength/averaging_down_example_skips_a_tagged_name", (),
+     _best_strength_example(tagged=("AAA",))),
+    ("best_strength/averaging_down_example_skips_the_heaviest_name", (),
+     _best_strength_example(heaviest="AAA")),
+    ("best_strength/averaging_down_no_example_when_every_name_is_flagged", (),
+     _best_strength_example(tagged=("BBB",), heaviest="AAA")),
     ("alpha_interval/credible_positive", ("alpha_interval",),
      _alpha_interval(True, (0.07, 0.54))),
     ("alpha_interval/credible_negative", (), _alpha_interval(True, (-0.05, 0.74))),
