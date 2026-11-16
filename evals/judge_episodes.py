@@ -78,6 +78,14 @@ import run_episodes as R  # noqa: E402  (offline, no network; see its module doc
 EFFORT = os.environ.get("TR_JUDGE_EFFORT", "high")
 RUNS = int(os.environ.get("TR_JUDGE_RUNS", "3"))
 
+# From `agy` 1.5.7 a headless run with no saved agentMode starts in Auto, which
+# executes shell commands and writes files in the working directory. A judge
+# reads an answer and returns a verdict; it needs neither, and the answer under
+# test is text it must not be able to act on. The session-only empty agentMode
+# selects Default, where both are auto-denied. Nothing is saved to the
+# maintainer's settings.
+AGY_READ_ONLY_ARGS = ("--settings", '{"agentMode":""}')
+
 # ── which model answers, and how it is reached ───────────────────────────────
 #
 # Two backends, because the two things they are good at do not overlap.
@@ -394,7 +402,7 @@ def cli_call_spec(model, prompt):
     """
     return {
         "argv": [AGY_PATH, "-p", prompt, "--model", model,
-                 "--effort", EFFORT],
+                 "--effort", EFFORT, *AGY_READ_ONLY_ARGS],
         "subprocess_kwargs": {
             "capture_output": True,
             "text": True,
@@ -420,7 +428,9 @@ def run_cli_sample(call, axes, parse=None):
     through an argument list and never a shell, because episode prose contains
     backticks and `$` a shell would expand into something else entirely; and a
     timeout is mandatory, since a hung CLI would otherwise stall the run with
-    no verdict and no error.
+    no verdict and no error. A fourth arrived with `agy` 1.5.7: the permission
+    mode is requested on the command line (`AGY_READ_ONLY_ARGS`), because a
+    headless run with no saved mode no longer starts in the denying one.
 
     `parse` is what the caller's own reply shape needs; it must fail closed by
     returning None, never by guessing. The narrative judge grades 0–5 scores
