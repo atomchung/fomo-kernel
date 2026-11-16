@@ -40,6 +40,12 @@ def parse_action(payload, *, allowed_actions, allowed_text):
     return Action(kind, text, option_id, reason)
 
 
+# The same session-only Default permission mode the judge requests; the reason
+# is stated once, beside `AGY_READ_ONLY_ARGS` in `evals/judge_episodes.py`, and
+# `tests/test_synthetic_walk.py` compares the two so they cannot drift.
+AGY_READ_ONLY_ARGS = ("--settings", '{"agentMode":""}')
+
+
 class StubSyntheticUser:
     """Offline primitive: returns only scenario-declared text in sequence."""
 
@@ -75,7 +81,8 @@ class AgySyntheticUser:
         last = ""
         for _ in range(3):
             try:
-                run = subprocess.run([binary, "-p", prompt, "--model", self.model, "--effort", self.effort],
+                run = subprocess.run([binary, "-p", prompt, "--model", self.model, "--effort", self.effort,
+                                      *AGY_READ_ONLY_ARGS],
                                      capture_output=True, text=True, timeout=280)
             except (OSError, subprocess.TimeoutExpired) as exc:
                 last = str(exc)

@@ -387,6 +387,9 @@ def test_agy_call_uses_argv_effort_absolute_path_and_retries_transient_errors():
     assert os.path.isabs(argv[0])
     assert argv[argv.index("--model") + 1] == "gemini-test-high"
     assert argv[argv.index("--effort") + 1] == judge.BASE.EFFORT
+    # Default permission mode is requested, and nothing widens what the CLI may do.
+    assert argv[argv.index("--settings") + 1] == '{"agentMode":""}'
+    assert not {"--mode", "--dangerously-skip-permissions", "--add-dir"} & set(argv)
     assert "THE FROZEN TRADE EVALUATION" in argv[argv.index("-p") + 1]
     assert "input" not in kwargs and kwargs["timeout"] >= 180
 

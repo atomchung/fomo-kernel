@@ -75,6 +75,33 @@ def test_invalid_synthetic_action_fails_before_route_or_judge():
     raise AssertionError("undeclared synthetic text was accepted")
 
 
+def test_the_llm_synthetic_user_runs_the_cli_in_default_permission_mode():
+    """The synthetic user returns one action; the CLI may not run commands or write files."""
+    import importlib.util
+    import types
+    import synthetic_user
+    seen = {}
+
+    def run(argv, **kwargs):
+        seen["argv"] = list(argv)
+        return types.SimpleNamespace(
+            returncode=0, stderr="",
+            stdout=json.dumps({"action_type": "provide_text", "text": "declared fact", "reason": "r"}))
+
+    with mock.patch.object(synthetic_user.subprocess, "run", side_effect=run):
+        action = synthetic_user.AgySyntheticUser({"persona": "synthetic"}).choose({"surface": "synthetic"})
+    assert action["text"] == "declared fact"
+    argv = seen["argv"]
+    assert argv[argv.index("--settings") + 1] == '{"agentMode":""}'
+    assert not {"--mode", "--dangerously-skip-permissions", "--add-dir"} & set(argv)
+    # One statement of the mode, two readers: the judge owns it, this file mirrors it.
+    spec = importlib.util.spec_from_file_location(
+        "judge_episodes_for_mode", ROOT / "evals" / "judge_episodes.py")
+    judge = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(judge)
+    assert synthetic_user.AGY_READ_ONLY_ARGS == judge.AGY_READ_ONLY_ARGS
+
+
 def test_semantic_timeout_preserves_a_combined_receipt_state():
     with mock.patch.object(runner.subprocess, "run",
                            side_effect=subprocess.TimeoutExpired(cmd="judge", timeout=1)):

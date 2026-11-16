@@ -487,6 +487,9 @@ def test_agy_path_goes_through_the_shared_cli_spec():
     argv = seen.get("call", {}).get("argv", [])
     ok(argv[:2] == ["/fake/bin/agy", "-p"] and "--model" in argv and "--effort" in argv,
        "argv 形狀來自共用的 cli_call_spec")
+    ok("--settings" in argv and argv[argv.index("--settings") + 1] == '{"agentMode":""}'
+       and not {"--mode", "--dangerously-skip-permissions", "--add-dir"} & set(argv),
+       "CLI 以 Default 權限模式執行(不跑指令、不寫檔),而且沒有任何放寬權限的旗標")
     kwargs = seen.get("call", {}).get("subprocess_kwargs", {})
     ok("input" not in kwargs and kwargs.get("timeout", 0) >= 180,
        "不走 stdin、而且一定有逾時(headless agy 不讀 stdin;掛住的 CLI 會卡死整輪)")
