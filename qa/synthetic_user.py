@@ -63,7 +63,7 @@ class StubSyntheticUser:
 class AgySyntheticUser:
     """Opt-in LLM boundary. It can return an action, never an answer or command."""
 
-    def __init__(self, scenario, *, model="gemini-3.6-flash-high", effort="high"):
+    def __init__(self, scenario, *, model="gemini-3.8-flash-high", effort="high"):
         self.scenario = scenario
         self.model = model
         self.effort = effort
