@@ -20,7 +20,7 @@ Usage:
   python3 evals/judge_episodes.py EP-008          # one episode
   TR_JUDGE_RUNS=5 python3 evals/judge_episodes.py # more votes per verdict
   TR_JUDGE_BACKEND=anthropic python3 evals/judge_episodes.py   # pin the backend
-  TR_JUDGE_MODEL=gemini-3.6-flash-high python3 evals/judge_episodes.py
+  TR_JUDGE_MODEL=gemini-3.8-flash-high python3 evals/judge_episodes.py
 
 What it does NOT do, stated plainly because a judge whose limits are unwritten
 gets over-trusted:
@@ -106,7 +106,7 @@ AGY_READ_ONLY_ARGS = ("--settings", '{"agentMode":""}')
 # Default is `auto`: whichever is actually available, agy first. A maintainer
 # who has neither is told both routes rather than one.
 BACKEND = os.environ.get("TR_JUDGE_BACKEND", "auto")
-DEFAULT_MODELS = {"anthropic": "claude-opus-5", "agy": "gemini-3.1-pro-high"}
+DEFAULT_MODELS = {"anthropic": "claude-opus-5", "agy": "gemini-4-argon-high"}
 MODEL = os.environ.get("TR_JUDGE_MODEL")  # resolved per backend in `resolve_backend`
 AGY_ATTEMPTS = 3
 AGY_TIMEOUT_SECONDS = 300
